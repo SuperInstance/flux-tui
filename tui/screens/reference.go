@@ -18,6 +18,8 @@ const (
 )
 
 // ReferenceScreen is the ISA reference browser screen.
+// It displays all FLUX opcodes with their encoding formats and descriptions,
+// and supports filtering by name or category.
 type ReferenceScreen struct {
 	scroll    int
 	filter    string
@@ -30,6 +32,12 @@ type ReferenceScreen struct {
 // NewReferenceScreen creates a new reference screen.
 func NewReferenceScreen() ReferenceScreen {
 	return ReferenceScreen{}
+}
+
+// SetSize sets the available dimensions for the reference screen.
+func (m ReferenceScreen) SetSize(width, height int) {
+	m.width = width
+	m.height = height
 }
 
 func (m ReferenceScreen) filteredOpcodes() []vm.OpcodeMeta {
@@ -73,8 +81,6 @@ func (m ReferenceScreen) handleRefBrowse(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c":
 		return m, tea.Quit
-	case "q":
-		return m, nil
 	case "up", "k":
 		if m.scroll > 0 {
 			m.scroll--
@@ -145,16 +151,18 @@ func (m ReferenceScreen) View() string {
 	b.WriteString("\n")
 
 	if m.inputMode == refFilter {
-		b.WriteString(styles.Warning.Render(fmt.Sprintf("Filter: /%s_", m.filterBuf)))
+		b.WriteString(styles.Warning.Render(fmt.Sprintf(" Filter: /%s_", m.filterBuf)))
 		b.WriteString("\n")
 	}
 
-	header := fmt.Sprintf("  %-8s %-8s %-8s %-8s %s", "OPCODE", "NAME", "FORMAT", "STACK", "DESCRIPTION")
+	// Column headers
+	header := fmt.Sprintf("  %-8s %-6s %-6s %-8s %s", "HEX", "NAME", "FMT", "STACK", "DESCRIPTION")
 	b.WriteString(styles.Subtitle.Render(header))
 	b.WriteString("\n")
-	b.WriteString(styles.Dim.Render(strings.Repeat("─", refMin(m.width, 80))))
+	b.WriteString(styles.Dim.Render(strings.Repeat("-", refMin(m.width, 80))))
 	b.WriteString("\n")
 
+	// Opcode rows
 	filtered := m.filteredOpcodes()
 	lh := m.height - 8
 	if lh < 4 {
@@ -168,16 +176,32 @@ func (m ReferenceScreen) View() string {
 
 	for i := si; i < ei; i++ {
 		op := filtered[i]
-		line := fmt.Sprintf("  0x%02X     %-8s %-8s %-8s %s",
-			byte(i), op.Name, op.Format, op.StackEffect, op.Description)
+		// Find the actual opcode byte index in the original table
+		opcodeByte := byte(i)
+		for idx, tableOp := range vm.OpcodeTable {
+			if tableOp.Name == op.Name {
+				opcodeByte = byte(idx)
+				break
+			}
+		}
+		line := fmt.Sprintf("  0x%02X     %-6s %-6s %-8s %s",
+			opcodeByte, op.Name, op.Format, op.StackEffect, op.Description)
 		b.WriteString(refTrunc(line, m.width-2))
 		b.WriteString("\n")
 	}
 
+	// Footer
 	b.WriteString("\n")
-	b.WriteString(styles.Dim.Render(fmt.Sprintf("Showing %d/%d opcodes", len(filtered), len(vm.OpcodeTable))))
+	b.WriteString(styles.Dim.Render(fmt.Sprintf(" Showing %d/%d opcodes  |  Memory: big-endian  |  Program loads at 0x%04X",
+		len(filtered), len(vm.OpcodeTable), vm.ProgramStart)))
 	b.WriteString("\n")
-	b.WriteString(styles.StatusLine.Render(refTrunc("[↑↓] Scroll  [/] Filter  [Esc] Clear  [q] Back", m.width)))
+
+	// Encoding format reference
+	encRef := "  Format A: [opcode(1)][value(4 BE)] = 5 bytes (PUSH)  |  Format B: [opcode(1)][addr(2 BE)] = 3 bytes (JMP/JZ/LOAD/STORE)  |  No-operand: 1 byte"
+	b.WriteString(styles.Dim.Render(refTrunc(encRef, m.width)))
+	b.WriteString("\n")
+
+	b.WriteString(styles.StatusLine.Render(refTrunc("[j/k or Up/Down] Scroll  [/] Filter  [Esc] Clear  [Home/End]  [q] Back", m.width)))
 	return b.String()
 }
 

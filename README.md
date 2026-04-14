@@ -1,4 +1,4 @@
-# 🔍 flux-tui
+# flux-tui
 
 **FLUX Bytecode VM Debugger & Conformance Dashboard**
 
@@ -6,12 +6,13 @@
 [![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?logo=go)](https://go.dev/)
 [![bubbletea](https://img.shields.io/badge/bubbletea-charm-5A56E6?logo=charm)](https://github.com/charmbracelet/bubbletea)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Tests](https://img.shields.io/badge/tests-20%2F20-brightgreen)](vm/engine_test.go)
 
 ---
 
 ## Overview
 
-**flux-tui** is a terminal-based debugger and conformance testing tool for the [FLUX](https://github.com/SuperInstance/flux-runtime) bytecode virtual machine. Built with Go and the [Charm](https://charm.sh/) ecosystem (`bubbletea` + `lipgloss` + `bubbles`), it provides an interactive TUI for stepping through FLUX bytecode programs, inspecting registers/stack/memory, running conformance test vectors, and browsing the ISA reference — all from your terminal.
+**flux-tui** is a terminal-based debugger and conformance testing tool for the [FLUX](https://github.com/SuperInstance/flux-runtime) bytecode virtual machine. Built with Go and the [Charm](https://charm.sh/) ecosystem (`bubbletea` + `lipgloss`), it provides an interactive TUI for stepping through FLUX bytecode programs, inspecting the operand stack and memory, running conformance test vectors, and browsing the ISA reference — all from your terminal.
 
 Part of the [SuperInstance](https://github.com/SuperInstance) fleet.
 
@@ -19,56 +20,61 @@ Part of the [SuperInstance](https://github.com/SuperInstance) fleet.
 
 ## Features
 
-- **Interactive step-through debugging** — Execute FLUX bytecode instruction by instruction with live register, stack, and memory views
+- **Interactive step-through debugging** — Execute FLUX bytecode instruction by instruction with live stack, memory, and disassembly views
 - **FLUX assembly parser & disassembler** — Two-pass assembler that parses `.fluxasm` source into bytecode, plus a disassembler for inspecting compiled programs
-- **Conformance test dashboard** — Run FLUX conformance test vectors against the VM and see pass/fail results in real time, with per-vector diagnostics
-- **Bytecode inspector** — Hex dump view of compiled bytecode with instruction boundaries highlighted and opcode annotations
-- **ISA reference browser** — Browse all FLUX opcodes, their encoding formats, and execution semantics without leaving the debugger
+- **Conformance test dashboard** — Run 20 built-in test vectors (covering all 17 opcodes) against the VM and see pass/fail results, plus load external JSON vectors from flux-conformance
+- **Bytecode inspector** — Hex dump view of compiled bytecode with ASCII preview, PC highlight, and inline disassembly annotations
+- **ISA reference browser** — Browse all 17 FLUX opcodes with their encoding formats, stack effects, and descriptions; supports filtering by name
 - **Snapshot/restore debugging primitives** — Save VM state at any point and restore it later for reproducible debugging sessions
-- **Single static binary, zero runtime dependencies** — Cross-compile for any platform; no runtime, no JVM, no Python — just one binary
+- **Command mode** — Enter `:` command mode for text-based debugging commands (step, run, reset, stack, mem, regs, pc)
+- **Smart file loading** — Auto-detects `.fluxasm` (assembly) vs `.fluxbin` (binary) from file extension; loads assembly files through the built-in assembler
+- **Single binary, zero runtime dependencies** — Cross-compile for any platform; no JVM, no Python — just one binary
 
 ---
 
 ## Screenshots
 
-### Debug View
+### Debugger View
 ```
-┌─ Registers ─────────────┐  ┌─ Stack ────────────────┐
-│ R0: 0x00000000  (zero)  │  │ [0] 0x0000002A  (42)  │
-│ R1: 0x0000001E  (30)   │  │ [1] 0x0000000F  (15)  │
-│ R2: 0x0000000A  (10)   │  │ [2] 0x00000003  (3)   │
-│ PC: 0x00000008          │  │ [3] 0x00000001  (1)   │
-│ SP: 0x00000004          │  └────────────────────────┘
-│ FL: 0b101 (neg|zero|carry) │
-└──────────────────────────┘
+  FLUX VM Debugger  [Debugger]
+  ─────────────────────────────────────────────────────────────
+ PC: 0x0105  Step: 3  Flags: Z--  RUNNING
+
+ ┌─ Registers ────────────────────────────────────────────┐
+ │  PC:    0x0105                                         │
+ │  Flags: Z-- (0x01)  Z=true  C=false  O=false         │
+ └────────────────────────────────────────────────────────┘
+ ┌─ Stack (1 items) ─────────────────────────────────────┐
+ │ > [0] 0x00000007 (7)                                  │
+ └────────────────────────────────────────────────────────┘
+ ┌─ Memory @ 0x0100 ─────────────────────────────────────┐
+ │ 0100: 01 00 00 00 03 01 00 00  04 05 FF               │
+ │ 0108: 10                                              │
+ └────────────────────────────────────────────────────────┘
+ ┌─ Disassembly ─────────────────────────────────────────┐
+ │   0x0100:  PUSH 0x00000003  ; 3                       │
+ │   0x0101:  PUSH 0x00000004  ; 4                       │
+ │ >>0x0105:  ADD                                       │
+ │   0x0106:  HALT                                      │
+ └────────────────────────────────────────────────────────┘
+ [s]tep [r]un [b]reak/reset [n]snapshot [p]restore [l]oad [:]cmd [q]uit
 ```
-*Step through bytecode with live register and stack inspection.*
 
 ### Conformance Dashboard
 ```
-┌─ Conformance Results ────────────────────────────┐
-│ PASS  126/138  (91.3%)                           │
-│ FAIL    8/138   (5.8%)  │ SKIP    4/138   (2.9%) │
-│─────────────────────────────────────────────────│
-│ ▸ arith-add-imm          PASS   0.01ms          │
-│ ▸ arith-sub-reg          PASS   0.01ms          │
-│ ▸ jmp-relative           FAIL   unexpected PC   │
-│ ▸ loop-decrement         PASS   0.02ms          │
-└─────────────────────────────────────────────────┘
-```
-*Run the full conformance suite and drill into failures.*
+  Conformance Dashboard
+  ─────────────────────────────────────────────────────────────
+  Total: 20  Passed: 20  Failed: 0  Pending: 0
 
-### Bytecode Inspector
+ ┌─ Results (20 vectors) ──────────────────────────────────┐
+ │  + nop_noop                           PASS              │
+ │  + push_pop_empty                     PASS              │
+ │  + push_single                        PASS              │
+ │  + add_basic                          PASS              │
+ │  + sub_basic                          PASS              │
+ │  ...                                                     │
+ └──────────────────────────────────────────────────────────┘
 ```
-┌─ Hex Dump ───────────────────────────────────────┐
-│ 0000: 02 00 00 00  NOP                          │
-│ 0004: 01 0A 00 00  LOAD_IMM R0, 10              │
-│ 0008: 01 1E 00 00  LOAD_IMM R1, 30              │
-│ 000C: 20 00 01 00  ADD R0, R1                   │
-│ 0010: FF 00 00 00  HALT                         │
-└─────────────────────────────────────────────────┘
-```
-*Inspect compiled bytecode with inline disassembly annotations.*
 
 ---
 
@@ -99,132 +105,182 @@ go build ./cmd/flux-tui
 # Load and debug a FLUX assembly file
 flux-tui program.fluxasm
 
-# Load and debug compiled bytecode
-flux-tui --binary program.fluxbin
+# Load compiled bytecode
+flux-tui program.fluxbin
 
-# Run conformance tests
-flux-tui --conformance
-
-# Start with empty VM
+# Start with empty VM (load later with 'l')
 flux-tui
 ```
 
 ### Keyboard Shortcuts
 
+#### Global (work from any screen)
 | Key | Action |
 |---|---|
-| `n` / `→` | Step to next instruction |
-| `s` / `Enter` | Step into (follow CALL) |
-| `o` / `←` | Step out of current frame |
-| `c` | Continue execution until breakpoint or HALT |
-| `b` | Toggle breakpoint at current PC |
-| `r` | Reset VM to initial state |
-| `m` | Toggle memory view |
-| `i` | Open ISA reference browser |
-| `d` | Open disassembler view |
-| `t` | Switch to conformance dashboard |
-| `h` | Toggle hex dump view |
+| `Tab` / `Shift+Tab` | Cycle through screens |
+| `1`-`4` | Jump directly to Debugger/Conformance/Inspector/Reference |
+| `?` | Jump to Help screen |
+| `q` | Back to Debugger (from any non-debugger screen) |
+| `Ctrl+C` | Quit |
+
+#### Debugger Screen
+| Key | Action |
+|---|---|
+| `s` / `Right` | Step one instruction |
+| `r` | Run until HALT |
+| `b` | Reset (break) VM |
+| `n` | Save snapshot |
+| `p` | Restore last snapshot |
+| `l` | Load assembly file |
+| `:` | Enter command mode |
 | `q` / `Ctrl+C` | Quit |
-| `?` | Show help overlay |
+
+#### Inspector Screen
+| Key | Action |
+|---|---|
+| `j/k` or `Up/Down` | Scroll one line |
+| `PgUp/PgDn` | Scroll one page |
+| `Home/End` | Jump to start/end |
+| `q` | Back to Debugger |
+
+#### Conformance Screen
+| Key | Action |
+|---|---|
+| `Enter` / `r` | Run all test vectors |
+| `j/k` or `Up/Down` | Navigate test list |
+| `e` | Load external vectors from flux-conformance |
+| `q` | Back to Debugger |
+
+#### Reference Screen
+| Key | Action |
+|---|---|
+| `j/k` or `Up/Down` | Scroll opcode list |
+| `/` | Enter filter mode |
+| `Esc` | Clear filter |
+| `q` | Back to Debugger |
 
 ### Assembly Example
 
 ```fluxasm
-; Simple factorial: compute 5!
-LOAD_IMM  R0, 5      ; n = 5
-LOAD_IMM  R1, 1      ; result = 1
-LOAD_IMM  R2, 1      ; multiplier = 1
+; Compute 5! = 120 using memory-based loop
+; acc at 0x0300, counter at 0x0301
+
+  PUSH 1
+  STORE 0x0300       ; acc = 1
+  PUSH 5
+  STORE 0x0301       ; counter = 5
 
 LOOP:
-MUL       R1, R1, R2 ; result *= multiplier
-ADD       R2, R2, 1  ; multiplier++
-SUB       R0, R0, 1  ; n--
-JNZ       R0, @LOOP  ; if n != 0, loop
+  LOAD 0x0301        ; push counter
+  JZ DONE            ; if counter == 0, done
+  LOAD 0x0300        ; push acc
+  LOAD 0x0301        ; push counter
+  MUL                ; acc * counter
+  STORE 0x0300       ; acc = result
+  LOAD 0x0301        ; push counter
+  PUSH 1
+  SUB                ; counter - 1
+  STORE 0x0301       ; counter = counter - 1
+  JMP LOOP
 
-HALT                ; R1 = 120
+DONE:
+  LOAD 0x0300        ; push acc (120)
+  HALT
 ```
 
 ---
 
-## FLUX ISA Quick Reference
+## FLUX ISA v1 Reference
 
-The FLUX bytecode VM uses fixed-width 4-byte instructions with 17 core opcodes:
+The FLUX bytecode VM is a **stack-based** machine with 17 core opcodes. All multi-byte values are big-endian.
 
-| Opcode | Hex | Format | Description |
-|--------|-----|--------|-------------|
-| `NOP` | `0x00` | — | No operation |
-| `HALT` | `0xFF` | — | Stop execution |
-| `LOAD_IMM` | `0x01` | `01 Rd I16` | Load immediate value into register |
-| `LOAD` | `0x02` | `02 Rd [Ra+off]` | Load from memory into register |
-| `STORE` | `0x03` | `03 [Ra+off] Rs` | Store register to memory |
-| `MOV` | `0x04` | `04 Rd Rs` | Copy register to register |
-| `ADD` | `0x10` | `10 Rd Ra Rb` | Integer addition |
-| `SUB` | `0x11` | `11 Rd Ra Rb` | Integer subtraction |
-| `MUL` | `0x12` | `12 Rd Ra Rb` | Integer multiplication |
-| `DIV` | `0x13` | `13 Rd Ra Rb` | Integer division |
-| `AND` | `0x14` | `14 Rd Ra Rb` | Bitwise AND |
-| `OR` | `0x15` | `15 Rd Ra Rb` | Bitwise OR |
-| `XOR` | `0x16` | `16 Rd Ra Rb` | Bitwise XOR |
-| `SHL` | `0x17` | `17 Rd Ra Rb` | Shift left |
-| `SHR` | `0x18` | `18 Rd Ra Rb` | Shift right |
-| `JMP` | `0x20` | `20 I16` | Unconditional jump |
-| `JNZ` | `0x21` | `21 Ra I16` | Jump if register is non-zero |
+### Opcode Map
 
-### Encoding Format
+| Hex | Opcode | Format | Stack Effect | Description |
+|-----|--------|--------|-------------|-------------|
+| `0x00` | `NOP` | - | | No operation |
+| `0x01` | `PUSH` | A | +1 | Push 4-byte immediate onto stack |
+| `0x02` | `POP` | - | -1 | Pop and discard top value |
+| `0x03` | `DUP` | - | +1 | Duplicate top of stack |
+| `0x04` | `SWAP` | - | | Exchange top two values |
+| `0x05` | `ADD` | - | -1 | Pop a,b; push a+b |
+| `0x06` | `SUB` | - | -1 | Pop a,b; push b-a |
+| `0x07` | `MUL` | - | -1 | Pop a,b; push a*b |
+| `0x08` | `AND` | - | -1 | Pop a,b; push a&b |
+| `0x09` | `OR` | - | -1 | Pop a,b; push a\|b |
+| `0x0A` | `XOR` | - | -1 | Pop a,b; push a^b |
+| `0x0B` | `NOT` | - | | Pop a; push ~a |
+| `0x0C` | `JMP` | B | | Unconditional jump to address |
+| `0x0D` | `JZ` | B | -1 | Pop value; jump if zero |
+| `0x0E` | `LOAD` | B | +1 | Load 4-byte word from memory |
+| `0x0F` | `STORE` | B | -1 | Store 4-byte word to memory |
+| `0x10` | `HALT` | - | | Stop execution |
 
-All instructions are 4 bytes (32 bits), big-endian:
+### Instruction Encoding
+
+- **Format A** (PUSH): `[opcode(1)][value(4 BE)]` = 5 bytes
+- **Format B** (JMP/JZ/LOAD/STORE): `[opcode(1)][addr(2 BE)]` = 3 bytes
+- **No-operand** (all others): `[opcode(1)]` = 1 byte
+
+### VM Architecture
+
+| Component | Specification |
+|-----------|--------------|
+| Memory | 64KB byte-addressable, big-endian |
+| Stack | 256 entries, LIFO, upward growth |
+| Program start | Fixed at `0x0100` |
+| Flags | Zero (Z), Carry (C), Overflow (O) |
+
+### Assembly Syntax
 
 ```
-Byte 0:    Opcode
-Byte 1:    Destination register (Rd) or unused
-Byte 2:    Source register A (Ra) or immediate high byte
-Byte 3:    Source register B (Rb) or immediate low byte
+; Comments start with ; or #
+label:
+  PUSH 42          ; decimal
+  PUSH 0xFF        ; hex
+  PUSH -1          ; negative
+  ADD              ; arithmetic
+  JMP label        ; jump to label
+  JZ 0x0200        ; jump to address
+  LOAD 0x0300      ; load from memory
+  STORE 0x0300     ; store to memory
+  HALT
 ```
-
-### Flag Register
-
-The VM maintains a flags register (`FL`) updated after arithmetic operations:
-
-| Flag | Bit | Meaning |
-|------|-----|---------|
-| Zero | 0 | Result was zero |
-| Negative | 1 | Result was negative |
-| Carry | 2 | Unsigned overflow |
 
 ---
 
 ## Architecture
 
-flux-tui is organized into the following packages:
-
 ```
 flux-tui/
-├── cmd/flux-tui/       # CLI entry point
-├── tui/                # Bubbletea TUI application
-│   ├── debug.go        # Debug view (registers, stack, memory)
-│   ├── conformance.go  # Conformance test dashboard
-│   ├── hexdump.go      # Bytecode hex inspector
-│   ├── isa.go          # ISA reference browser
-│   └── snapshot.go     # Snapshot/restore primitives
+├── cmd/flux-tui/       # CLI entry point with file detection
+├── tui/
+│   ├── screens/        # 5 bubbletea screen models
+│   │   ├── types.go    # Screen types, factory functions, ScreenModel interface
+│   │   ├── debugger.go # Main VM debugger with step/run/snapshot
+│   │   ├── conformance.go # Test vector dashboard
+│   │   ├── inspector.go # Hex dump bytecode inspector
+│   │   ├── reference.go  # ISA opcode browser with filter
+│   │   └── help.go       # Keybinding and ISA reference
+│   └── styles/
+│       └── styles.go   # Lipgloss style definitions
 ├── vm/                 # FLUX bytecode virtual machine
-│   ├── vm.go           # Core VM: fetch-decode-execute loop
-│   ├── registers.go    # Register file and flag handling
-│   ├── memory.go       # Memory model (byte-addressable)
-│   └── stack.go        # Operand stack
+│   ├── engine.go       # Core VM: fetch-decode-execute cycle
+│   ├── engine_test.go  # 20 test cases covering all opcodes
+│   ├── memory.go       # 64KB byte-addressable memory
+│   ├── stack.go        # 256-entry operand stack
+│   ├── registers.go    # PC, SP, flags
+│   ├── opcodes.go      # Opcode definitions and encoding helpers
+│   └── helpers.go      # Opcode name maps and width calculations
 ├── assembler/          # Two-pass FLUX assembler
-│   ├── parser.go       # Tokenizer and parser for .fluxasm
+│   ├── lexer.go        # Tokenizer for .fluxasm source
 │   ├── assembler.go    # Label resolution and code emission
-│   └── disasm.go       # Disassembler (bytecode → assembly)
-└── conformance/        # Conformance test framework
-    ├── runner.go       # Test vector execution engine
-    ├── vectors.go      # Built-in test vectors
-    └── report.go       # Pass/fail reporting
+│   ├── disassembler.go # Bytecode to assembly listing
+│   └── api.go          # Convenience Assemble() function
+└── conformance/        # Test vector framework
+    ├── vectors.go      # 20 built-in vectors + external JSON loader
+    └── runner.go       # Vector execution and pass/fail reporting
 ```
-
-- **`vm`** — Pure Go implementation of the FLUX bytecode VM with fetch-decode-execute cycle, 16 general-purpose registers, byte-addressable memory, and an operand stack.
-- **`assembler`** — Two-pass assembler: first pass collects labels, second pass resolves references and emits 4-byte instructions. The disassembler reverses the process.
-- **`conformance`** — Runs structured test vectors (input bytecode + expected state) against the VM and produces pass/fail reports with per-vector diagnostics.
-- **`tui`** — Charm-powered terminal UI built on `bubbletea`'s Elm architecture, styled with `lipgloss`, using `bubbles` components for input and lists.
 
 ---
 
@@ -243,13 +299,14 @@ go build ./cmd/flux-tui
 ### Test
 
 ```bash
-go test ./...
+go test ./... -v
 ```
 
-### Run (development)
+### Run
 
 ```bash
 go run ./cmd/flux-tui
+go run ./cmd/flux-tui examples/factorial.fluxasm
 ```
 
 ---
@@ -258,13 +315,11 @@ go run ./cmd/flux-tui
 
 flux-tui follows the [SuperInstance fleet conventions](https://github.com/SuperInstance/fleet-contributing):
 
-1. **Push often** — The fleet captain watches the commit feed as a dashboard. Small, atomic commits with clear messages.
-2. **Test first** — Run `go test ./...` before every push. All tests must pass.
-3. **Conventional commits** — Use `feat:`, `fix:`, `test:`, `docs:`, `refactor:` prefixes.
-4. **The repo IS the agent** — README, tests, and commit history are the primary documentation.
-5. **Witness marks** — Leave detailed commit messages explaining *why*, not just *what*.
-
-See [fleet-contributing](https://github.com/SuperInstance/fleet-contributing) for the full contribution guide and vessel templates.
+1. **Push often** — Small, atomic commits with clear messages
+2. **Test first** — `go test ./...` before every push; all 20 tests must pass
+3. **Conventional commits** — `feat:`, `fix:`, `test:`, `docs:`, `refactor:` prefixes
+4. **The repo IS the agent** — README, tests, and commit history are primary documentation
+5. **Witness marks** — Commit messages explain *why*, not just *what*
 
 ---
 
@@ -276,12 +331,9 @@ MIT — see [LICENSE](LICENSE) for details.
 
 ## Part of the SuperInstance Fleet
 
-flux-tui is one vessel in the [SuperInstance](https://github.com/SuperInstance) fleet — an ecosystem of AI agent tools, runtimes, and coordination protocols for the FLUX bytecode VM.
-
 | Vessel | Role |
 |--------|------|
-| [Oracle1](https://github.com/SuperInstance/oracle1-vessel) 🔮 | Lighthouse — fleet coordination, FLUX ecosystem architecture |
-| [JetsonClaw1](https://github.com/Lucineer/jetsonclaw1-vessel) ⚡ | Vessel — edge/CUDA runtime, hardware specialization |
-| [Babel](https://github.com/SuperInstance/babel-vessel) 🌐 | Scout — multilingual, grammatical analysis |
-| [Datum](https://github.com/SuperInstance/super-z-quartermaster) 📋 | Quartermaster — fleet hygiene, auditing, specifications |
-| **flux-tui** 🔍 | Debugger — TUI debugging and conformance dashboard |
+| [Oracle1](https://github.com/SuperInstance/oracle1-vessel) | Lighthouse — fleet coordination, FLUX ecosystem architecture |
+| [flux-conformance](https://github.com/SuperInstance/flux-conformance) | Vectors — 161 conformance test vectors for FLUX runtimes |
+| [ability-transfer](https://github.com/SuperInstance/ability-transfer) | ISA — FLUX ISA v3 specification and round-table synthesis |
+| **flux-tui** | Debugger — TUI debugging and conformance dashboard |

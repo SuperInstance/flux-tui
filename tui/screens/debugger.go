@@ -27,6 +27,8 @@ const (
 )
 
 // DebuggerScreen is the full-featured VM debugger screen.
+// It provides step/run debugging, register/stack/memory inspection,
+// disassembly view, snapshot/restore, file loading, and command mode.
 type DebuggerScreen struct {
 	engine      *vm.Engine
 	sourceCode  string
@@ -42,6 +44,12 @@ type DebuggerScreen struct {
 // NewDebuggerScreen creates a new debugger screen.
 func NewDebuggerScreen(engine *vm.Engine) DebuggerScreen {
 	return DebuggerScreen{engine: engine}
+}
+
+// SetSize sets the available dimensions for the debugger screen.
+func (m DebuggerScreen) SetSize(width, height int) {
+	m.width = width
+	m.height = height
 }
 
 func (m DebuggerScreen) Init() tea.Cmd { return nil }
@@ -88,9 +96,9 @@ func (m DebuggerScreen) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleCommandInput(msg)
 	}
 	switch msg.String() {
-	case "ctrl+c", "q":
+	case "ctrl+c":
 		return m, tea.Quit
-	case "s":
+	case "s", "right":
 		if m.engine.Halted {
 			m.errMsg = "VM is halted. Press 'b' to reset."
 		} else {
@@ -181,7 +189,7 @@ func executeDbgCommand(e *vm.Engine, cmd string) string {
 	}
 	switch parts[0] {
 	case "help":
-		return "Commands: step, run, reset, stack, mem <addr>, regs, pc"
+		return "Commands: step, run, reset, stack, mem <addr>, regs, pc, snapshot, restore"
 	case "step":
 		if e.Halted {
 			return "VM is halted."
@@ -197,6 +205,10 @@ func executeDbgCommand(e *vm.Engine, cmd string) string {
 	case "reset":
 		e.Reset()
 		return "Reset."
+	case "snapshot":
+		return "Use 'n' key to save snapshot."
+	case "restore":
+		return "Use 'p' key to restore snapshot."
 	case "stack":
 		items := e.StackValues()
 		if len(items) == 0 {
@@ -250,18 +262,22 @@ func (m DebuggerScreen) View() string {
 	b.WriteString(styles.Title.Render(" FLUX VM Debugger "))
 	b.WriteString("\n")
 
-	status := "Halted"
+	status := "HALTED"
+	statusStyle := styles.FailStyle
 	if !m.engine.Halted {
-		status = "Running"
+		status = "RUNNING"
+		statusStyle = styles.PassStyle
 	}
 	r := m.engine.Registers()
 	flags := fmtDbgFlags(r)
-	b.WriteString(styles.StatusLine.Render(fmt.Sprintf("PC: 0x%04X  Step: %d  Flags: %s  Status: %s", m.engine.PC, m.engine.Cycles, flags, status)))
+	b.WriteString(styles.StatusLine.Render(
+		fmt.Sprintf(" PC: 0x%04X  Step: %d  Flags: %s  %s", m.engine.PC, m.engine.Cycles, flags, statusStyle.Render(status)),
+	))
 	b.WriteString("\n")
 
 	switch m.inputMode {
 	case dbgModeLoad:
-		b.WriteString(styles.Warning.Render(fmt.Sprintf("Load file: %s_", m.inputBuf)))
+		b.WriteString(styles.Warning.Render(fmt.Sprintf(" Load file: %s_", m.inputBuf)))
 		b.WriteString("\n")
 	case dbgModeCommand:
 		b.WriteString(styles.Warning.Render(fmt.Sprintf(":%s_", m.inputBuf)))
@@ -270,40 +286,43 @@ func (m DebuggerScreen) View() string {
 
 	if m.errMsg != "" {
 		if strings.Contains(m.errMsg, "saved") || strings.Contains(m.errMsg, "restored") || strings.Contains(m.errMsg, "Reset") {
-			b.WriteString(styles.Success.Render(m.errMsg))
+			b.WriteString(styles.Success.Render(" " + m.errMsg))
 		} else {
-			b.WriteString(styles.Error.Render(m.errMsg))
+			b.WriteString(styles.Error.Render(" " + m.errMsg))
 		}
 		b.WriteString("\n")
 	}
 
 	if m.engine.ProgramLength() == 0 && m.sourceCode == "" {
-		b.WriteString(styles.Dim.Render("No program loaded. Press 'l' to load assembly or binary."))
+		b.WriteString(styles.Dim.Render(" No program loaded. Press 'l' to load .fluxasm or use CLI: flux-tui program.fluxasm"))
 		b.WriteString("\n")
 	} else {
-		uh := m.height - 8
-		if uh < 10 {
-			uh = 10
+		availHeight := m.height - 7 // title + status + input + err + bottom bar + borders
+		if m.inputMode != dbgModeNormal {
+			availHeight--
 		}
+		if m.errMsg != "" {
+			availHeight--
+		}
+
+		// Layout: registers(4 lines) + stack(6 lines) + memory(6 lines) + disassembly(rest)
+		regH := 4
+		stkH := 6
+		memH := 6
+		dasmH := availHeight - regH - stkH - memH - 4 // 4 for panel borders/padding
+		if dasmH < 4 {
+			dasmH = 4
+			stkH = 4
+			memH = 4
+		}
+
 		b.WriteString(renderDbgRegisters(m.engine, m.width))
 		b.WriteString("\n")
-		sh := 6
-		if uh < 20 {
-			sh = 4
-		}
-		b.WriteString(renderDbgStack(m.engine, m.width, sh))
+		b.WriteString(renderDbgStack(m.engine, m.width, stkH))
 		b.WriteString("\n")
-		mh := 4
-		if uh > 24 {
-			mh = 8
-		}
-		b.WriteString(renderDbgMemory(m.engine, m.width, mh))
+		b.WriteString(renderDbgMemory(m.engine, m.width, memH))
 		b.WriteString("\n")
-		dh := uh - 22
-		if dh < 4 {
-			dh = 4
-		}
-		b.WriteString(renderDbgDisasm(m.engine, m.width, dh))
+		b.WriteString(renderDbgDisasm(m.engine, m.width, dasmH))
 		b.WriteString("\n")
 	}
 
@@ -312,7 +331,7 @@ func (m DebuggerScreen) View() string {
 }
 
 func fmtDbgFlags(r *vm.Registers) string {
-	f := [4]byte{'-', '-', '-', '-'}
+	f := [3]byte{'-', '-', '-'}
 	if r.Zero() {
 		f[0] = 'Z'
 	}
@@ -328,21 +347,19 @@ func fmtDbgFlags(r *vm.Registers) string {
 func renderDbgRegisters(e *vm.Engine, w int) string {
 	r := e.Registers()
 	var b strings.Builder
-	b.WriteString(styles.PanelHeader.Render("─ Registers "))
+	b.WriteString(styles.PanelHeader.Render(" Registers "))
 	b.WriteString("\n")
-	b.WriteString(dbgTrunc(fmt.Sprintf("  PC: 0x%04X", r.PC), w-4))
+	b.WriteString(dbgTrunc(fmt.Sprintf("  PC:    0x%04X", r.PC), w-4))
 	b.WriteString("\n")
-	b.WriteString(dbgTrunc(fmt.Sprintf("  Flags: %s (0x%02X)", fmtDbgFlags(r), r.Flags), w-4))
+	b.WriteString(dbgTrunc(fmt.Sprintf("  Flags: %s (0x%02X)  Z=%v  C=%v  O=%v", fmtDbgFlags(r), r.Flags, r.Zero(), r.Carry(), r.Overflow()), w-4))
 	b.WriteString("\n")
-	b.WriteString(dbgTrunc(fmt.Sprintf("  Zero: %v  Carry: %v  Overflow: %v", r.Zero(), r.Carry(), r.Overflow()), w-4))
-	b.WriteString("\n")
-	return styles.Border.Width(w).Height(4).Render(b.String())
+	return styles.Border.Width(w).Height(3).Render(b.String())
 }
 
 func renderDbgStack(e *vm.Engine, w int, maxL int) string {
 	items := e.StackValues()
 	var b strings.Builder
-	b.WriteString(styles.PanelHeader.Render("─ Stack "))
+	b.WriteString(styles.PanelHeader.Render(fmt.Sprintf(" Stack (%d items) ", len(items))))
 	b.WriteString("\n")
 	if len(items) == 0 {
 		b.WriteString(styles.Dim.Render("  (empty)"))
@@ -352,14 +369,25 @@ func renderDbgStack(e *vm.Engine, w int, maxL int) string {
 		if start < 0 {
 			start = 0
 		}
+		if start > 0 {
+			b.WriteString(styles.Dim.Render(fmt.Sprintf("  ... %d more above ...", start)))
+			b.WriteString("\n")
+		}
 		for i := start; i < len(items); i++ {
-			b.WriteString(dbgTrunc(fmt.Sprintf("  [%d] 0x%08X (%d)", i, items[i], items[i]), w-6))
+			marker := "  "
+			if i == len(items)-1 {
+				marker = "> "
+			}
+			b.WriteString(dbgTrunc(fmt.Sprintf("%s[%d] 0x%08X (%d)", marker, i, items[i], items[i]), w-6))
 			b.WriteString("\n")
 		}
 	}
 	h := maxL + 2
 	if len(items) == 0 {
 		h = 3
+	}
+	if start := len(items) - maxL; start > 0 {
+		h++
 	}
 	return styles.Border.Width(w).Height(h).Render(b.String())
 }
@@ -368,7 +396,7 @@ func renderDbgMemory(e *vm.Engine, w int, maxL int) string {
 	mem := e.Mem()
 	bpl := 8
 	var b strings.Builder
-	b.WriteString(styles.PanelHeader.Render(fmt.Sprintf("─ Memory (0x%04X) ", vm.ProgramStart)))
+	b.WriteString(styles.PanelHeader.Render(fmt.Sprintf(" Memory @ 0x%04X ", vm.ProgramStart)))
 	b.WriteString("\n")
 	for row := 0; row < maxL; row++ {
 		addr := vm.ProgramStart + uint16(row*bpl)
@@ -397,12 +425,13 @@ func renderDbgMemory(e *vm.Engine, w int, maxL int) string {
 				dasm = dasm[:idx]
 			}
 			dasm = strings.TrimSpace(dasm)
-			if len(dasm) > 12 {
+			// Strip address prefix
+			if len(dasm) > 12 && dasm[2] == 'x' {
 				dasm = dasm[12:]
 			}
 			b.WriteString("  ")
 			if addr == e.PC {
-				b.WriteString(styles.CurrentLine.Render("▸ " + dasm))
+				b.WriteString(styles.CurrentLine.Render("> " + dasm))
 			} else {
 				b.WriteString(styles.InstructionStyle.Render(dasm))
 			}
@@ -414,7 +443,7 @@ func renderDbgMemory(e *vm.Engine, w int, maxL int) string {
 
 func renderDbgDisasm(e *vm.Engine, w int, maxL int) string {
 	var b strings.Builder
-	b.WriteString(styles.PanelHeader.Render("─ Disassembly "))
+	b.WriteString(styles.PanelHeader.Render(" Disassembly "))
 	b.WriteString("\n")
 	if e.ProgramLength() == 0 {
 		b.WriteString(styles.Dim.Render("  (no program)"))
@@ -444,7 +473,7 @@ func renderDbgDisasm(e *vm.Engine, w int, maxL int) string {
 			line := strings.TrimSpace(lines[i])
 			pfx := "  "
 			if i == pcLine {
-				pfx = "▶ "
+				pfx = ">>"
 				b.WriteString(styles.CurrentLine.Render(pfx + line))
 			} else {
 				b.WriteString(styles.InstructionStyle.Render(pfx + line))

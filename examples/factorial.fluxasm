@@ -1,0 +1,24 @@
+; factorial.fluxasm — Compute 5! = 120
+; Uses memory at 0x0300 (accumulator) and 0x0301 (counter)
+
+  PUSH 1
+  STORE 0x0300       ; acc = 1
+  PUSH 5
+  STORE 0x0301       ; counter = 5
+
+LOOP:
+  LOAD 0x0301        ; push counter
+  JZ DONE            ; if counter == 0, jump to DONE
+  LOAD 0x0300        ; push acc
+  LOAD 0x0301        ; push counter
+  MUL                ; acc * counter
+  STORE 0x0300       ; acc = result
+  LOAD 0x0301        ; push counter
+  PUSH 1
+  SUB                ; counter - 1
+  STORE 0x0301       ; update counter
+  JMP LOOP           ; repeat
+
+DONE:
+  LOAD 0x0300        ; push result (should be 120)
+  HALT               ; stack: [120]

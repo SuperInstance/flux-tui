@@ -1,0 +1,40 @@
+; fibonacci.fluxasm — Compute Fibonacci(10) using memory
+; mem[0x0300] = a, mem[0x0301] = b, mem[0x0302] = temp, mem[0x0303] = i
+; Result: b = 89 (Fibonacci(10))
+
+  PUSH 0
+  STORE 0x0300       ; a = 0
+  PUSH 1
+  STORE 0x0301       ; b = 1
+  PUSH 10
+  STORE 0x0303       ; i = 10
+
+LOOP:
+  LOAD 0x0303        ; push i
+  JZ DONE            ; if i == 0, done
+
+  ; temp = a + b
+  LOAD 0x0300
+  LOAD 0x0301
+  ADD
+  STORE 0x0302       ; temp = a + b
+
+  ; a = b
+  LOAD 0x0301
+  STORE 0x0300       ; a = b
+
+  ; b = temp
+  LOAD 0x0302
+  STORE 0x0301       ; b = temp
+
+  ; i--
+  LOAD 0x0303
+  PUSH 1
+  SUB
+  STORE 0x0303
+
+  JMP LOOP
+
+DONE:
+  LOAD 0x0301        ; push b (should be 89)
+  HALT
