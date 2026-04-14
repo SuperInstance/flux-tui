@@ -1,0 +1,4 @@
+bin/
+flux-tui
+*.exe
+vendor/
