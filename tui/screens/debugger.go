@@ -24,21 +24,26 @@ const (
 	dbgModeNormal dbgMode = iota
 	dbgModeLoad
 	dbgModeCommand
+	dbgModeBreakpoint // entering breakpoint address
+	dbgModeMemAddr    // entering memory address
 )
 
 // DebuggerScreen is the full-featured VM debugger screen.
 // It provides step/run debugging, register/stack/memory inspection,
 // disassembly view, snapshot/restore, file loading, and command mode.
 type DebuggerScreen struct {
-	engine      *vm.Engine
-	sourceCode  string
-	sourceLines []string
-	width       int
-	height      int
-	errMsg      string
-	inputMode   dbgMode
-	inputBuf    string
-	snapshot    *vm.EngineSnapshot
+	engine        *vm.Engine
+	sourceCode    string
+	sourceLines   []string
+	width         int
+	height        int
+	errMsg        string
+	inputMode     dbgMode
+	inputBuf      string
+	snapshot      *vm.EngineSnapshot
+	snapshots     []*vm.EngineSnapshot // multi-snapshot list
+	memAddr       uint16               // memory view base address
+	memScrollMode bool                 // whether memory view can be navigated
 }
 
 // NewDebuggerScreen creates a new debugger screen.
@@ -94,6 +99,10 @@ func (m DebuggerScreen) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleLoadInput(msg)
 	case dbgModeCommand:
 		return m.handleCommandInput(msg)
+	case dbgModeBreakpoint:
+		return m.handleBreakpointInput(msg)
+	case dbgModeMemAddr:
+		return m.handleMemAddrInput(msg)
 	}
 	switch msg.String() {
 	case "ctrl+c":
@@ -133,6 +142,47 @@ func (m DebuggerScreen) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.inputMode = dbgModeCommand
 		m.inputBuf = ""
 		m.errMsg = ""
+	case "f": // Toggle breakpoint at current PC
+		addr := m.engine.PC
+		bm := m.engine.Breakpoints()
+		added := bm.Toggle(addr)
+		if added {
+			m.errMsg = fmt.Sprintf("Breakpoint set at 0x%04X", addr)
+		} else {
+			m.errMsg = fmt.Sprintf("Breakpoint cleared at 0x%04X", addr)
+		}
+	case "F": // Clear all breakpoints
+		m.engine.Breakpoints().Clear()
+		m.errMsg = "All breakpoints cleared."
+	case "c": // Continue (run, stop at breakpoint or halt)
+		if m.engine.Halted {
+			m.errMsg = "VM is halted. Press 'b' to reset."
+		} else {
+			m.engine.Run()
+			if m.engine.Halted {
+				m.errMsg = ""
+			} else {
+				m.errMsg = fmt.Sprintf("Breakpoint hit at 0x%04X", m.engine.PC)
+			}
+		}
+	case "g": // Go to memory address
+		m.inputMode = dbgModeMemAddr
+		m.inputBuf = ""
+		m.errMsg = ""
+	case "N": // Save numbered snapshot
+		snap := m.engine.Snapshot()
+		m.snapshots = append(m.snapshots, snap)
+		m.errMsg = fmt.Sprintf("Snapshot #%d saved.", len(m.snapshots))
+	case "P": // List snapshots
+		if len(m.snapshots) == 0 {
+			m.errMsg = "No numbered snapshots. Press 'N' to save."
+		} else {
+			lines := []string{fmt.Sprintf("Snapshots: %d", len(m.snapshots))}
+			for i := len(m.snapshots) - 1; i >= 0 && i >= len(m.snapshots)-5; i-- {
+				lines = append(lines, fmt.Sprintf("  #%d: PC=0x%04X Steps=%d", i+1, m.snapshots[i].PC, m.snapshots[i].StepCount))
+			}
+			m.errMsg = strings.Join(lines, " | ")
+		}
 	}
 	return m, nil
 }
@@ -182,6 +232,78 @@ func (m DebuggerScreen) handleCommandInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) 
 	return m, nil
 }
 
+func (m DebuggerScreen) handleBreakpointInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.inputMode = dbgModeNormal
+		m.inputBuf = ""
+		m.errMsg = ""
+	case "enter":
+		addrStr := strings.TrimSpace(m.inputBuf)
+		m.inputBuf = ""
+		m.inputMode = dbgModeNormal
+		if addrStr == "" {
+			return m, nil
+		}
+		var addr uint16
+		_, err := fmt.Sscanf(addrStr, "%x", &addr)
+		if err != nil {
+			m.errMsg = fmt.Sprintf("Invalid address: %s", addrStr)
+			return m, nil
+		}
+		bm := m.engine.Breakpoints()
+		added := bm.Toggle(addr)
+		if added {
+			m.errMsg = fmt.Sprintf("Breakpoint set at 0x%04X", addr)
+		} else {
+			m.errMsg = fmt.Sprintf("Breakpoint cleared at 0x%04X", addr)
+		}
+	case "backspace":
+		if len(m.inputBuf) > 0 {
+			m.inputBuf = m.inputBuf[:len(m.inputBuf)-1]
+		}
+	default:
+		if len(msg.String()) == 1 {
+			m.inputBuf += msg.String()
+		}
+	}
+	return m, nil
+}
+
+func (m DebuggerScreen) handleMemAddrInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.inputMode = dbgModeNormal
+		m.inputBuf = ""
+		m.errMsg = ""
+	case "enter":
+		addrStr := strings.TrimSpace(m.inputBuf)
+		m.inputBuf = ""
+		m.inputMode = dbgModeNormal
+		if addrStr == "" {
+			return m, nil
+		}
+		var addr uint16
+		_, err := fmt.Sscanf(addrStr, "%x", &addr)
+		if err != nil {
+			m.errMsg = fmt.Sprintf("Invalid address: %s", addrStr)
+			return m, nil
+		}
+		m.memAddr = addr
+		m.memScrollMode = true
+		m.errMsg = fmt.Sprintf("Memory view at 0x%04X", addr)
+	case "backspace":
+		if len(m.inputBuf) > 0 {
+			m.inputBuf = m.inputBuf[:len(m.inputBuf)-1]
+		}
+	default:
+		if len(msg.String()) == 1 {
+			m.inputBuf += msg.String()
+		}
+	}
+	return m, nil
+}
+
 func executeDbgCommand(e *vm.Engine, cmd string) string {
 	parts := strings.Fields(cmd)
 	if len(parts) == 0 {
@@ -189,7 +311,7 @@ func executeDbgCommand(e *vm.Engine, cmd string) string {
 	}
 	switch parts[0] {
 	case "help":
-		return "Commands: step, run, reset, stack, mem <addr>, regs, pc, snapshot, restore"
+		return "Commands: step, run, continue, reset, stack, mem <addr>, regs, pc, bp <addr>, bplist, bpclear, snapshot, restore"
 	case "step":
 		if e.Halted {
 			return "VM is halted."
@@ -202,6 +324,15 @@ func executeDbgCommand(e *vm.Engine, cmd string) string {
 		}
 		e.Run()
 		return ""
+	case "continue":
+		if e.Halted {
+			return "VM is halted."
+		}
+		e.Run()
+		if e.Halted {
+			return ""
+		}
+		return fmt.Sprintf("Breakpoint hit at 0x%04X", e.PC)
 	case "reset":
 		e.Reset()
 		return "Reset."
@@ -235,6 +366,36 @@ func executeDbgCommand(e *vm.Engine, cmd string) string {
 		return fmt.Sprintf("PC=0x%04X Flags=0x%02X Z=%v C=%v O=%v", r.PC, r.Flags, r.Zero(), r.Carry(), r.Overflow())
 	case "pc":
 		return fmt.Sprintf("PC = 0x%04X", e.PC)
+	case "bp":
+		if len(parts) < 2 {
+			return "Usage: bp <addr>"
+		}
+		var addr uint16
+		_, err := fmt.Sscanf(parts[1], "%x", &addr)
+		if err != nil {
+			return fmt.Sprintf("Invalid address: %s", parts[1])
+		}
+		bm := e.Breakpoints()
+		added := bm.Toggle(addr)
+		if added {
+			return fmt.Sprintf("Breakpoint set at 0x%04X", addr)
+		}
+		return fmt.Sprintf("Breakpoint cleared at 0x%04X", addr)
+	case "bplist":
+		bpAddrs := e.Breakpoints().List()
+		if len(bpAddrs) == 0 {
+			return "No breakpoints."
+		}
+		lines := make([]string, len(bpAddrs))
+		for i, addr := range bpAddrs {
+			lines[i] = fmt.Sprintf("  0x%04X", addr)
+		}
+		return strings.Join(lines, "\n")
+	case "bpclear":
+		e.Breakpoints().Clear()
+		return "All breakpoints cleared."
+	case "goto":
+		return "Use 'g' key to navigate memory view."
 	default:
 		return fmt.Sprintf("Unknown command: %s", parts[0])
 	}
@@ -282,10 +443,16 @@ func (m DebuggerScreen) View() string {
 	case dbgModeCommand:
 		b.WriteString(styles.Warning.Render(fmt.Sprintf(":%s_", m.inputBuf)))
 		b.WriteString("\n")
+	case dbgModeBreakpoint:
+		b.WriteString(styles.Warning.Render(fmt.Sprintf(" Breakpoint addr: 0x%s_", m.inputBuf)))
+		b.WriteString("\n")
+	case dbgModeMemAddr:
+		b.WriteString(styles.Warning.Render(fmt.Sprintf(" Goto memory addr: 0x%s_", m.inputBuf)))
+		b.WriteString("\n")
 	}
 
 	if m.errMsg != "" {
-		if strings.Contains(m.errMsg, "saved") || strings.Contains(m.errMsg, "restored") || strings.Contains(m.errMsg, "Reset") {
+		if strings.Contains(m.errMsg, "saved") || strings.Contains(m.errMsg, "restored") || strings.Contains(m.errMsg, "Reset") || strings.Contains(m.errMsg, "cleared") {
 			b.WriteString(styles.Success.Render(" " + m.errMsg))
 		} else {
 			b.WriteString(styles.Error.Render(" " + m.errMsg))
@@ -320,13 +487,17 @@ func (m DebuggerScreen) View() string {
 		b.WriteString("\n")
 		b.WriteString(renderDbgStack(m.engine, m.width, stkH))
 		b.WriteString("\n")
-		b.WriteString(renderDbgMemory(m.engine, m.width, memH))
+		memBase := vm.ProgramStart
+		if m.memScrollMode {
+			memBase = m.memAddr
+		}
+		b.WriteString(renderDbgMemory(m.engine, m.width, memH, memBase))
 		b.WriteString("\n")
 		b.WriteString(renderDbgDisasm(m.engine, m.width, dasmH))
 		b.WriteString("\n")
 	}
 
-	b.WriteString(styles.StatusLine.Render(dbgTrunc("[s]tep [r]un [b]reak/reset [n]snapshot [p]restore [l]oad [:]cmd [q]uit", m.width)))
+	b.WriteString(styles.StatusLine.Render(dbgTrunc("[s]tep [r]un [c]ontinue [b]reak/reset [f]bp-toggle [g]oto-mem [n]snap [N]snap# [l]oad [:]cmd [q]uit", m.width)))
 	return b.String()
 }
 
@@ -392,20 +563,23 @@ func renderDbgStack(e *vm.Engine, w int, maxL int) string {
 	return styles.Border.Width(w).Height(h).Render(b.String())
 }
 
-func renderDbgMemory(e *vm.Engine, w int, maxL int) string {
+func renderDbgMemory(e *vm.Engine, w int, maxL int, baseAddr uint16) string {
 	mem := e.Mem()
 	bpl := 8
 	var b strings.Builder
-	b.WriteString(styles.PanelHeader.Render(fmt.Sprintf(" Memory @ 0x%04X ", vm.ProgramStart)))
+	b.WriteString(styles.PanelHeader.Render(fmt.Sprintf(" Memory @ 0x%04X ", baseAddr)))
 	b.WriteString("\n")
 	for row := 0; row < maxL; row++ {
-		addr := vm.ProgramStart + uint16(row*bpl)
+		addr := baseAddr + uint16(row*bpl)
+		if int(addr) >= vm.MemorySize {
+			break
+		}
 		b.WriteString(styles.AddrStyle.Render(fmt.Sprintf("%04X:", addr)))
 		b.WriteString(" ")
 		parts := make([]string, bpl)
 		for col := 0; col < bpl; col++ {
 			a := addr + uint16(col)
-			if a < vm.ProgramStart+uint16(e.ProgramLength()) {
+			if int(a) < vm.MemorySize {
 				bt, _ := mem.Load(a)
 				parts[col] = fmt.Sprintf("%02X", bt)
 			} else {
@@ -413,7 +587,7 @@ func renderDbgMemory(e *vm.Engine, w int, maxL int) string {
 			}
 		}
 		b.WriteString(styles.HexByteStyle.Render(strings.Join(parts, " ")))
-		if addr < vm.ProgramStart+uint16(e.ProgramLength()) {
+		if addr >= vm.ProgramStart && addr < vm.ProgramStart+uint16(e.ProgramLength()) {
 			data := mem.LoadRange(addr, bpl)
 			el := bpl
 			rem := e.ProgramLength() - int(addr-vm.ProgramStart)
@@ -439,6 +613,20 @@ func renderDbgMemory(e *vm.Engine, w int, maxL int) string {
 		b.WriteString("\n")
 	}
 	return styles.Border.Width(w).Height(maxL+2).Render(b.String())
+}
+
+func extractAddrFromDasmLine(line string) uint16 {
+	parts := strings.SplitN(line, ":", 2)
+	if len(parts) < 2 {
+		return 0
+	}
+	addrStr := strings.TrimSpace(parts[0])
+	var addr uint16
+	_, err := fmt.Sscanf(addrStr, "0x%x", &addr)
+	if err != nil {
+		return 0
+	}
+	return addr
 }
 
 func renderDbgDisasm(e *vm.Engine, w int, maxL int) string {
@@ -472,9 +660,18 @@ func renderDbgDisasm(e *vm.Engine, w int, maxL int) string {
 		for i := sl; i < el; i++ {
 			line := strings.TrimSpace(lines[i])
 			pfx := "  "
-			if i == pcLine {
+			lineAddr := extractAddrFromDasmLine(line)
+			hasBP := e.Breakpoints().Has(lineAddr)
+			isPC := (i == pcLine)
+			if isPC && hasBP {
 				pfx = ">>"
 				b.WriteString(styles.CurrentLine.Render(pfx + line))
+			} else if isPC {
+				pfx = ">>"
+				b.WriteString(styles.CurrentLine.Render(pfx + line))
+			} else if hasBP {
+				pfx = " *"
+				b.WriteString(styles.Warning.Render(pfx + line))
 			} else {
 				b.WriteString(styles.InstructionStyle.Render(pfx + line))
 			}

@@ -19,6 +19,8 @@ const (
         TokenEOF                // End of input
         TokenNewline            // Newline character
         TokenError              // Lexer error
+        TokenDirective          // Data directive (.DB, .DW, .ASCII)
+        TokenString             // Quoted string literal
 )
 
 // String returns a human-readable name for the token type.
@@ -42,6 +44,10 @@ func (t TokenType) String() string {
                 return "NEWLINE"
         case TokenError:
                 return "ERROR"
+        case TokenDirective:
+                return "DIRECTIVE"
+        case TokenString:
+                return "STRING"
         default:
                 return "UNKNOWN"
         }
@@ -155,6 +161,14 @@ func (l *Lexer) NextToken() Token {
                 return l.readNumber()
         }
 
+        if ch == '"' {
+                return l.readString()
+        }
+
+        if ch == '.' {
+                return l.readIdentifier()
+        }
+
         if isIdentStart(ch) {
                 return l.readIdentifier()
         }
@@ -209,6 +223,13 @@ func (l *Lexer) readIdentifier() Token {
         val := l.input[start:l.pos]
         upper := strings.ToUpper(val)
 
+        if strings.HasPrefix(val, ".") {
+                switch upper {
+                case ".DB", ".DW", ".ASCII":
+                        return Token{Type: TokenDirective, Value: upper, Line: startLine, Col: startCol}
+                }
+        }
+
         if knownOpcodes[upper] {
                 return Token{Type: TokenOpcode, Value: upper, Line: startLine, Col: startCol}
         }
@@ -225,7 +246,52 @@ func isIdentStart(ch rune) bool {
 }
 
 func isIdentPart(ch rune) bool {
-        return isIdentStart(ch) || (ch >= '0' && ch <= '9')
+        return isIdentStart(ch) || (ch >= '0' && ch <= '9') || ch == '.'
+}
+
+// readString lexes a quoted string literal, handling escape sequences.
+func (l *Lexer) readString() Token {
+        // l.peek() is currently '"'
+        l.advance() // consume opening quote
+        startLine := l.line
+        startCol := l.col
+        var sb strings.Builder
+        for l.pos < len(l.input) {
+                ch := l.peek()
+                if ch == '"' {
+                        l.advance() // consume closing quote
+                        return Token{Type: TokenString, Value: sb.String(), Line: startLine, Col: startCol}
+                }
+                if ch == '\\' {
+                        l.advance()
+                        esc := l.peek()
+                        switch esc {
+                        case 'n':
+                                sb.WriteByte('\n')
+                        case 't':
+                                sb.WriteByte('\t')
+                        case 'r':
+                                sb.WriteByte('\r')
+                        case '\\':
+                                sb.WriteByte('\\')
+                        case '"':
+                                sb.WriteByte('"')
+                        default:
+                                sb.WriteByte('\\')
+                                sb.WriteByte(byte(esc))
+                        }
+                        if esc != 0 {
+                                l.advance()
+                        }
+                        continue
+                }
+                if ch == 0 || ch == '\n' {
+                        return Token{Type: TokenError, Value: "unterminated string", Line: startLine, Col: startCol}
+                }
+                sb.WriteByte(byte(ch))
+                l.advance()
+        }
+        return Token{Type: TokenError, Value: "unterminated string", Line: startLine, Col: startCol}
 }
 
 func isHexDigit(ch rune) bool {

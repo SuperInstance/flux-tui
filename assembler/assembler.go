@@ -163,6 +163,66 @@ func (a *Assembler) assemblePass(pass int) ([]byte, error) {
 
                         addr += uint16(vm.OpcodeWidth(opcode))
 
+                case TokenDirective:
+                        dir := tok.Value
+                        switch dir {
+                        case ".DB":
+                                // .DB <value> [, <value> ...]
+                                // Each value is a single byte
+                                i++
+                                for i < len(filtered) && filtered[i].Type != TokenOpcode && filtered[i].Type != TokenLabel && filtered[i].Type != TokenDirective {
+                                        ot := filtered[i]
+                                        val, err := parseNumber(ot.Value, ot.Line, ot.Col, &a.errors)
+                                        if err != nil {
+                                                return nil, fmt.Errorf("assembly aborted")
+                                        }
+                                        output = append(output, byte(val&0xFF))
+                                        addr++
+                                        i++
+                                        // Skip commas (TokenColon used as separator)
+                                        if i < len(filtered) && filtered[i].Type == TokenColon {
+                                                i++
+                                        }
+                                }
+                                continue
+                        case ".DW":
+                                // .DW <value> [, <value> ...]
+                                // Each value is a 2-byte big-endian word
+                                i++
+                                for i < len(filtered) && filtered[i].Type != TokenOpcode && filtered[i].Type != TokenLabel && filtered[i].Type != TokenDirective {
+                                        ot := filtered[i]
+                                        val, err := parseNumber(ot.Value, ot.Line, ot.Col, &a.errors)
+                                        if err != nil {
+                                                return nil, fmt.Errorf("assembly aborted")
+                                        }
+                                        buf := make([]byte, 2)
+                                        binary.BigEndian.PutUint16(buf, uint16(val))
+                                        output = append(output, buf...)
+                                        addr += 2
+                                        i++
+                                        // Skip commas (TokenColon used as separator)
+                                        if i < len(filtered) && filtered[i].Type == TokenColon {
+                                                i++
+                                        }
+                                }
+                                continue
+                        case ".ASCII":
+                                // .ASCII "string"
+                                i++
+                                if i >= len(filtered) || filtered[i].Type != TokenString {
+                                        a.errors = append(a.errors, AsmError{Line: tok.Line, Col: tok.Col, Message: ".ASCII requires a quoted string"})
+                                        return nil, fmt.Errorf("assembly aborted")
+                                }
+                                str := filtered[i].Value
+                                output = append(output, []byte(str)...)
+                                addr += uint16(len(str))
+                                i++
+                                continue
+                        default:
+                                a.errors = append(a.errors, AsmError{Line: tok.Line, Col: tok.Col, Message: fmt.Sprintf("unknown directive: %s", dir)})
+                                return nil, fmt.Errorf("assembly aborted")
+                        }
+
                 default:
                         a.errors = append(a.errors, AsmError{
                                 Line: tok.Line, Col: tok.Col,
