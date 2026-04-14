@@ -20,6 +20,18 @@ type conformanceDoneMsg struct {
         source  string // "builtin" or file path
 }
 
+type singleVectorDoneMsg struct {
+        index  int
+        result conformance.Result
+}
+
+type cfInputMode int
+
+const (
+        cfModeNormal cfInputMode = iota
+        cfModePath
+)
+
 // ConformanceScreen is the conformance test dashboard screen.
 // It runs FLUX conformance vectors against the VM and shows pass/fail results.
 type ConformanceScreen struct {
@@ -33,6 +45,8 @@ type ConformanceScreen struct {
         pending   bool
         loadPath  string // external vectors file path
         summary   string // last run summary
+        inputMode cfInputMode
+        inputBuf  string
 }
 
 // NewConformanceScreen creates a new conformance screen with built-in vectors.
@@ -96,6 +110,18 @@ func (m ConformanceScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
                         m.summary = fmt.Sprintf("Ran %d from %s: %d passed, %d failed", msg.loaded, src, passed, failed)
                 }
                 return m, nil
+        case singleVectorDoneMsg:
+                for len(m.results) <= msg.index {
+                        m.results = append(m.results, conformance.Result{})
+                }
+                m.results[msg.index] = msg.result
+                m.running = false
+                if msg.result.Pass {
+                        m.summary = fmt.Sprintf("%s: PASS", msg.result.Name)
+                } else {
+                        m.summary = fmt.Sprintf("%s: FAIL - %s", msg.result.Name, msg.result.Reason)
+                }
+                return m, nil
         }
         return m, nil
 }
@@ -106,6 +132,9 @@ func (m ConformanceScreen) RunBuiltin() []conformance.Result {
 }
 
 func (m ConformanceScreen) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+        if m.inputMode == cfModePath {
+                return m.handlePathInput(msg)
+        }
         switch msg.String() {
         case "ctrl+c":
                 return m, tea.Quit
@@ -125,6 +154,17 @@ func (m ConformanceScreen) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
                                         loaded:  len(vectors),
                                         source:  source,
                                 }
+                        }
+                }
+        case "x":
+                if !m.running && m.selected >= 0 && m.selected < len(m.vectors) {
+                        m.running = true
+                        m.summary = fmt.Sprintf("Running %s...", m.vectors[m.selected].Name)
+                        idx := m.selected
+                        vec := m.vectors[idx]
+                        return m, func() tea.Msg {
+                                result := conformance.RunVector(vec)
+                                return singleVectorDoneMsg{index: idx, result: result}
                         }
                 }
         case "up", "k":
@@ -172,6 +212,45 @@ func (m ConformanceScreen) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
                                 }
                         }
                         return conformanceLoadMsg{err: fmt.Errorf("no conformance vectors found (tried conformance/vectors/manifest.json)")}
+                }
+        case "p":
+                m.inputMode = cfModePath
+                m.inputBuf = ""
+                m.summary = "Enter path to vectors JSON file"
+        }
+        return m, nil
+}
+
+func (m ConformanceScreen) handlePathInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+        switch msg.String() {
+        case "esc":
+                m.inputMode = cfModeNormal
+                m.inputBuf = ""
+                m.summary = ""
+        case "enter":
+                path := strings.TrimSpace(m.inputBuf)
+                m.inputBuf = ""
+                m.inputMode = cfModeNormal
+                if path == "" {
+                        return m, nil
+                }
+                m.pending = true
+                m.results = nil
+                m.selected = 0
+                return m, func() tea.Msg {
+                        vecs, skipped, err := conformance.LoadExternalVectors(path)
+                        if err != nil {
+                                return conformanceLoadMsg{err: err}
+                        }
+                        return conformanceLoadMsg{path: path, vectors: vecs, skipped: skipped}
+                }
+        case "backspace":
+                if len(m.inputBuf) > 0 {
+                        m.inputBuf = m.inputBuf[:len(m.inputBuf)-1]
+                }
+        default:
+                if len(msg.String()) == 1 {
+                        m.inputBuf += msg.String()
                 }
         }
         return m, nil
@@ -287,6 +366,9 @@ func (m ConformanceScreen) View() string {
                 b.WriteString(fmt.Sprintf("  Category: %s\n", tv.Category))
                 b.WriteString(fmt.Sprintf("  Program:  %d bytes\n", len(tv.Program)))
                 b.WriteString(fmt.Sprintf("  Expected: stack=%v, halted=%v\n", cfFmtStack(tv.ExpectedStack), tv.ExpectedHalted))
+                if len(tv.ExpectedMemory) > 0 {
+                        b.WriteString(fmt.Sprintf("  Memory:  %d locations\n", len(tv.ExpectedMemory)))
+                }
                 if !m.pending && m.selected < len(m.results) {
                         res := m.results[m.selected]
                         b.WriteString("  Result:   ")
@@ -303,8 +385,13 @@ func (m ConformanceScreen) View() string {
                 }
         }
 
+        if m.inputMode == cfModePath {
+                b.WriteString(styles.Warning.Render(fmt.Sprintf(" Path: %s_", m.inputBuf)))
+                b.WriteString("\n")
+        }
+
         b.WriteString("\n")
-        b.WriteString(styles.StatusLine.Render(cfTrunc("[enter/r] Run  [e] Load external  [j/k] Navigate  [Home/End] Jump  [q] Back", m.width)))
+        b.WriteString(styles.StatusLine.Render(cfTrunc("[enter/r] Run all  [x] Run selected  [e] Auto-load  [p] Load path  [j/k] Navigate  [q] Back", m.width)))
         return b.String()
 }
 
