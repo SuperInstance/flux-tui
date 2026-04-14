@@ -98,7 +98,7 @@ func (m *Memory) DecodeInstruction(addr uint16) (opcode byte, operand uint32, ne
                 val := binary.BigEndian.Uint32(m.data[addr+1 : addr+5])
                 return op, val, addr + 5, nil
 
-        case JMP, JZ, LOAD, STORE:
+        case JMP, JZ, LOAD, STORE, CALL, JNZ, JC:
                 if int(addr)+3 > MemorySize {
                         return op, 0, 0, fmt.Errorf("%s instruction overflows memory at 0x%04X", OpcodeName(op), addr)
                 }

@@ -20,12 +20,13 @@ type EngineSnapshot struct {
 
 // Engine is the FLUX bytecode virtual machine.
 type Engine struct {
-        mem       *Memory
-        stack     *Stack
-        regs      *Registers
-        stepCount int
-        halted    bool
-        progLen   int
+        mem         *Memory
+        stack       *Stack
+        regs        *Registers
+        stepCount   int
+        halted      bool
+        progLen     int
+        breakpoints *BreakpointManager
 
         // Public convenience fields (synced by syncFields).
         // These provide quick access for TUI rendering and compatibility
@@ -39,10 +40,11 @@ type Engine struct {
 // NewEngine creates a new VM engine with zeroed state.
 func NewEngine() *Engine {
         return &Engine{
-                mem:    NewMemory(),
-                stack:  NewStack(),
-                regs:   NewRegisters(),
-                Memory: make(map[uint16]uint32),
+                mem:         NewMemory(),
+                stack:       NewStack(),
+                regs:        NewRegisters(),
+                breakpoints: NewBreakpointManager(),
+                Memory:      make(map[uint16]uint32),
         }
 }
 
@@ -78,6 +80,11 @@ func (e *Engine) Reset() {
 }
 
 // Halted is exported for TUI compatibility. Use e.Halted directly (bool field).
+
+// Breakpoints returns the breakpoint manager.
+func (e *Engine) Breakpoints() *BreakpointManager {
+        return e.breakpoints
+}
 
 // Stack returns the current stack.
 func (e *Engine) Stack() *Stack {
@@ -139,15 +146,20 @@ func (e *Engine) Restore(snap *EngineSnapshot) {
         e.syncFields()
 }
 
-// Run executes instructions until the VM halts or maxSteps is reached.
-func (e *Engine) Run(maxSteps ...int) {
+// Run executes instructions until the VM halts, a breakpoint is hit, or maxSteps is reached.
+// Returns true if execution stopped due to a breakpoint (rather than halt or step limit).
+func (e *Engine) Run(maxSteps ...int) bool {
         limit := 1000000
         if len(maxSteps) > 0 && maxSteps[0] > 0 {
                 limit = maxSteps[0]
         }
         for !e.halted && e.stepCount < limit {
                 _ = e.Step()
+                if e.breakpoints.CheckHit(e.PC) {
+                        return true
+                }
         }
+        return false
 }
 
 // Step executes a single instruction and returns any error.
@@ -355,6 +367,111 @@ func (e *Engine) Step() error {
 
         case HALT:
                 e.halted = true
+
+        case CALL:
+                if int(e.regs.PC)+2 > MemorySize {
+                        e.halted = true
+                        return fmt.Errorf("CALL reads beyond memory at 0x%04X", e.regs.PC)
+                }
+                addr := uint16(e.mem.data[e.regs.PC])<<8 | uint16(e.mem.data[e.regs.PC+1])
+                nextPC := e.regs.PC + 2
+                if err := e.stack.Push(uint32(nextPC)); err != nil {
+                        e.halted = true
+                        return fmt.Errorf("CALL: stack overflow")
+                }
+                e.regs.PC = addr
+
+        case RET:
+                val, err := e.stack.Pop()
+                if err != nil {
+                        e.halted = true
+                        return fmt.Errorf("RET: stack underflow")
+                }
+                e.regs.PC = uint16(val)
+
+        case CMP:
+                a, err1 := e.stack.Pop()
+                b, err2 := e.stack.Pop()
+                if err1 != nil || err2 != nil {
+                        e.halted = true
+                        return fmt.Errorf("CMP: stack underflow")
+                }
+                result := b - a
+                carry := b < a
+                e.regs.SetFlags(result, carry, false)
+
+        case JNZ:
+                val, err := e.stack.Pop()
+                if err != nil {
+                        e.halted = true
+                        return fmt.Errorf("JNZ: stack underflow")
+                }
+                if int(e.regs.PC)+2 > MemorySize {
+                        e.halted = true
+                        return fmt.Errorf("JNZ reads beyond memory at 0x%04X", e.regs.PC)
+                }
+                addr := uint16(e.mem.data[e.regs.PC])<<8 | uint16(e.mem.data[e.regs.PC+1])
+                e.regs.PC += 2
+                if val != 0 {
+                        e.regs.PC = addr
+                }
+
+        case JC:
+                if int(e.regs.PC)+2 > MemorySize {
+                        e.halted = true
+                        return fmt.Errorf("JC reads beyond memory at 0x%04X", e.regs.PC)
+                }
+                addr := uint16(e.mem.data[e.regs.PC])<<8 | uint16(e.mem.data[e.regs.PC+1])
+                e.regs.PC += 2
+                if e.regs.Carry() {
+                        e.regs.PC = addr
+                }
+
+        case SHL:
+                a, err1 := e.stack.Pop()
+                b, err2 := e.stack.Pop()
+                if err1 != nil || err2 != nil {
+                        e.halted = true
+                        return fmt.Errorf("SHL: stack underflow")
+                }
+                result := b << (a & 31)
+                e.regs.SetFlags(result, false, false)
+                if err := e.stack.Push(result); err != nil {
+                        e.halted = true
+                        return err
+                }
+
+        case SHR:
+                a, err1 := e.stack.Pop()
+                b, err2 := e.stack.Pop()
+                if err1 != nil || err2 != nil {
+                        e.halted = true
+                        return fmt.Errorf("SHR: stack underflow")
+                }
+                result := b >> (a & 31)
+                e.regs.SetFlags(result, false, false)
+                if err := e.stack.Push(result); err != nil {
+                        e.halted = true
+                        return err
+                }
+
+        case DIV:
+                a, err1 := e.stack.Pop()
+                b, err2 := e.stack.Pop()
+                if err1 != nil || err2 != nil {
+                        e.halted = true
+                        return fmt.Errorf("DIV: stack underflow")
+                }
+                if a == 0 {
+                        e.halted = true
+                        return fmt.Errorf("DIV: division by zero")
+                }
+                result := b / a
+                e.regs.SetFlags(result, false, false)
+                if err := e.stack.Push(result); err != nil {
+                        e.halted = true
+                        return err
+                }
 
         default:
                 e.halted = true
