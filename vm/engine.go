@@ -36,10 +36,8 @@ type Engine struct {
         // Public convenience fields (synced by syncFields).
         // These provide quick access for TUI rendering and compatibility
         // with existing screen code.
-        PC      uint16
-        Cycles  int
-        Halted  bool
-        Memory  map[uint16]uint32
+        PC     uint16
+        Cycles int
 }
 
 // NewEngine creates a new VM engine with zeroed state.
@@ -50,7 +48,6 @@ func NewEngine() *Engine {
                 returnStack: NewStack(),
                 regs:        NewRegisters(),
                 breakpoints: NewBreakpointManager(),
-                Memory:      make(map[uint16]uint32),
         }
 }
 
@@ -58,7 +55,11 @@ func NewEngine() *Engine {
 func (e *Engine) syncFields() {
         e.PC = e.regs.PC
         e.Cycles = e.stepCount
-        e.Halted = e.halted
+}
+
+// IsHalted returns whether the VM has halted.
+func (e *Engine) IsHalted() bool {
+        return e.halted
 }
 
 // LoadProgram copies program bytes into memory starting at ProgramStart.
@@ -68,8 +69,8 @@ func (e *Engine) LoadProgram(data []byte) (uint16, error) {
         e.halted = false
         e.stepCount = 0
         e.stack.Clear()
+        e.returnStack.Clear()
         e.regs = NewRegisters()
-        e.Memory = make(map[uint16]uint32)
         _, err := e.mem.LoadProgram(data)
         e.syncFields()
         return ProgramStart, err
@@ -79,13 +80,12 @@ func (e *Engine) LoadProgram(data []byte) (uint16, error) {
 // until LoadProgram is called again).
 func (e *Engine) Reset() {
         e.stack.Clear()
+        e.returnStack.Clear()
         e.regs = NewRegisters()
         e.stepCount = 0
         e.halted = false
         e.syncFields()
 }
-
-// Halted is exported for TUI compatibility. Use e.Halted directly (bool field).
 
 // Breakpoints returns the breakpoint manager.
 func (e *Engine) Breakpoints() *BreakpointManager {

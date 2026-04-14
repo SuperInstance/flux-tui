@@ -456,11 +456,19 @@ func toFloat64(v interface{}) (float64, bool) {
 }
 
 // isSupportedOpcode checks if a program only uses opcodes our VM supports (0x00-0x18).
+// Walks instruction boundaries using vm.OpcodeWidth rather than checking every byte,
+// to avoid false rejections from large operand values in PUSH/addr instructions.
 func isSupportedOpcode(program []byte) bool {
-        for _, b := range program {
-                if b > maxSupportedOpcode {
+        for i := 0; i < len(program); {
+                op := program[i]
+                if op > maxSupportedOpcode {
                         return false
                 }
+                w := vm.OpcodeWidth(op)
+                if w <= 0 {
+                        return false
+                }
+                i += w
         }
         return true
 }

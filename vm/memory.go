@@ -122,8 +122,17 @@ func (m *Memory) SetData(data [MemorySize]byte) {
 }
 
 // LoadRange returns a slice of bytes from start for the given length.
+// Clamps to memory bounds to prevent out-of-range reads.
 func (m *Memory) LoadRange(start uint16, length int) []byte {
-        out := make([]byte, length)
-        copy(out, m.data[start:start+uint16(length)])
+        end := int(start) + length
+        if end > MemorySize {
+                end = MemorySize
+        }
+        actualLen := end - int(start)
+        if actualLen <= 0 {
+                return nil
+        }
+        out := make([]byte, actualLen)
+        copy(out, m.data[start:end])
         return out
 }

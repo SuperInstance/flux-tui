@@ -30,7 +30,7 @@ func RunVector(tv TestVector) Result {
 	e.Run()
 
 	actualStack := e.StackValues()
-	halted := e.Halted
+	halted := e.IsHalted()
 
 	if halted != tv.ExpectedHalted {
 		return Result{

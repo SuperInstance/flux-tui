@@ -3,7 +3,6 @@ package assembler
 
 import (
         "strings"
-        "unicode"
 )
 
 // TokenType represents the type of a lexed token.
@@ -325,4 +324,3 @@ func FilterTokens(tokens []Token) []Token {
         return result
 }
 
-var _ = unicode.IsSpace

@@ -70,6 +70,3 @@ func OpcodeWidth(op byte) int {
                 return 1 // NOP, POP, DUP, SWAP, ADD, SUB, MUL, AND, OR, XOR, NOT, HALT, RET, CMP, SHL, SHR, DIV
         }
 }
-
-// MemoryBase is an alias for ProgramStart (0x0100) for compatibility.
-const MemoryBase = ProgramStart

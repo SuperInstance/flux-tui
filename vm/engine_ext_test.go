@@ -109,7 +109,7 @@ func TestEngine_RunStopsOnBreakpoint(t *testing.T) {
 
         e.Run()
 
-        if e.Halted {
+        if e.IsHalted() {
                 t.Error("expected engine NOT halted (should stop at breakpoint before HALT)")
         }
         if e.StepCount() != 3 {
@@ -128,7 +128,7 @@ func TestEngine_RunPassesBreakpointWhenDisabled(t *testing.T) {
         e.Breakpoints().Add(ProgramStart + 10) // somewhere in the program
         e.Breakpoints().Disable()
         e.Run()
-        if !e.Halted {
+        if !e.IsHalted() {
                 t.Error("expected engine to halt when breakpoints disabled")
         }
 }
@@ -186,7 +186,7 @@ func TestCallRet(t *testing.T) {
 
         // Step HALT
         e.Step()
-        if !e.Halted {
+        if !e.IsHalted() {
                 t.Error("expected halted after HALT at return address")
         }
 }
@@ -228,7 +228,7 @@ func TestCallRetNested(t *testing.T) {
         e.LoadProgram(prog)
         e.Run()
 
-        if !e.Halted {
+        if !e.IsHalted() {
                 t.Error("expected halted after nested calls")
         }
         items := e.StackValues()
@@ -321,7 +321,7 @@ func TestJNZ_NotTaken(t *testing.T) {
 
         e.LoadProgram(prog)
         e.Run()
-        if !e.Halted {
+        if !e.IsHalted() {
                 t.Error("expected halted (JNZ not taken, HALT executed)")
         }
 }
@@ -343,7 +343,7 @@ func TestJC_Taken(t *testing.T) {
 
         e.LoadProgram(prog)
         e.Run()
-        if !e.Halted {
+        if !e.IsHalted() {
                 t.Error("expected halted after JC taken + HALT at target")
         }
 }
@@ -359,7 +359,7 @@ func TestJC_NotTaken(t *testing.T) {
 
         e.LoadProgram(prog)
         e.Run()
-        if !e.Halted {
+        if !e.IsHalted() {
                 t.Error("expected halted (JC not taken, HALT executed)")
         }
 }
@@ -436,7 +436,7 @@ func TestDIV_ByZero(t *testing.T) {
         prog := append(append(FormatA(PUSH, 42), FormatA(PUSH, 0)...), DIV, HALT)
         e.LoadProgram(prog)
         e.Run()
-        if !e.Halted {
+        if !e.IsHalted() {
                 t.Error("expected engine halted on division by zero")
         }
 }
@@ -478,7 +478,7 @@ func TestCMP_SubsequentJZ(t *testing.T) {
 
         e.LoadProgram(prog)
         e.Run()
-        if !e.Halted {
+        if !e.IsHalted() {
                 t.Error("expected halted after JZ taken to target HALT")
         }
 }

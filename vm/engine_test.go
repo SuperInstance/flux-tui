@@ -347,7 +347,7 @@ func TestHalt(t *testing.T) {
                 t.Fatalf("LoadProgram: %v", err)
         }
         e.Step() // HALT
-        if !e.Halted {
+        if !e.IsHalted() {
                 t.Error("expected engine to be halted")
         }
         // Step on halted engine should return error
@@ -370,7 +370,7 @@ func TestSnapshotRestore(t *testing.T) {
 
         // Run to completion
         e.Run()
-        if !e.Halted {
+        if !e.IsHalted() {
                 t.Error("expected halted after Run")
         }
         if e.stack.Depth() != 1 {
@@ -385,13 +385,13 @@ func TestSnapshotRestore(t *testing.T) {
 
         // Modify state
         e2.Step() // HALT
-        if e2.Halted {
+        if e2.IsHalted() {
                 // Good, it halted
         }
 
         // Restore
         e2.Restore(snap)
-        if e2.Halted {
+        if e2.IsHalted() {
                 t.Error("expected not halted after restore")
         }
         if e2.StepCount() != 1 {
@@ -418,7 +418,7 @@ func TestStackOverflow(t *testing.T) {
 
         // Run - should halt due to stack overflow
         e.Run(300)
-        if !e.Halted {
+        if !e.IsHalted() {
                 t.Error("expected engine to halt on stack overflow")
         }
         // Stack depth should be at most 256
@@ -444,7 +444,7 @@ func TestRunToHalt(t *testing.T) {
         }
         e.Run()
 
-        if !e.Halted {
+        if !e.IsHalted() {
                 t.Error("expected halted")
         }
         val, _ := e.stack.Peek()

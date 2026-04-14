@@ -54,33 +54,9 @@ func DisassembleInstruction(data []byte, offset int) (string, int) {
                 val := binary.BigEndian.Uint32(data[offset+1 : offset+5])
                 return fmt.Sprintf("PUSH 0x%08X  ; %d", val, int32(val)), 5
 
-        case vm.JMP:
+        case vm.JMP, vm.JZ, vm.LOAD, vm.STORE, vm.CALL, vm.JNZ, vm.JC:
                 addr := binary.BigEndian.Uint16(data[offset+1 : offset+3])
-                return fmt.Sprintf("JMP 0x%04X", addr), 3
-
-        case vm.JZ:
-                addr := binary.BigEndian.Uint16(data[offset+1 : offset+3])
-                return fmt.Sprintf("JZ 0x%04X", addr), 3
-
-        case vm.LOAD:
-                addr := binary.BigEndian.Uint16(data[offset+1 : offset+3])
-                return fmt.Sprintf("LOAD 0x%04X", addr), 3
-
-        case vm.STORE:
-                addr := binary.BigEndian.Uint16(data[offset+1 : offset+3])
-                return fmt.Sprintf("STORE 0x%04X", addr), 3
-
-        case vm.CALL:
-                addr := binary.BigEndian.Uint16(data[offset+1 : offset+3])
-                return fmt.Sprintf("CALL 0x%04X", addr), 3
-
-        case vm.JNZ:
-                addr := binary.BigEndian.Uint16(data[offset+1 : offset+3])
-                return fmt.Sprintf("JNZ 0x%04X", addr), 3
-
-        case vm.JC:
-                addr := binary.BigEndian.Uint16(data[offset+1 : offset+3])
-                return fmt.Sprintf("JC 0x%04X", addr), 3
+                return fmt.Sprintf("%s 0x%04X", name, addr), 3
 
         default:
                 return name, 1

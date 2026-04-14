@@ -413,3 +413,5 @@ MIT — see [LICENSE](LICENSE) for details.
 ---
 
 <img src="callsign1.jpg" width="128" alt="callsign">
+
+<img src="assets/signature.jpg" width="200" alt="Datum signature" />

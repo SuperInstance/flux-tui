@@ -339,7 +339,7 @@ HALT
         e.LoadProgram(code)
         e.Run()
 
-        if !e.Halted {
+        if !e.IsHalted() {
                 t.Error("expected halted")
         }
         val, err := e.Stack().Peek()
@@ -371,7 +371,7 @@ RET
         e.LoadProgram(code)
         e.Run()
 
-        if !e.Halted {
+        if !e.IsHalted() {
                 t.Error("expected halted")
         }
         items := e.StackValues()
@@ -414,7 +414,7 @@ HALT
         e.LoadProgram(code)
         e.Run()
 
-        if !e.Halted {
+        if !e.IsHalted() {
                 t.Error("expected halted")
         }
         val, _ := e.Stack().Peek()
