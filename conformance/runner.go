@@ -74,11 +74,44 @@ func RunVector(tv TestVector) Result {
 // RunAll executes all built-in test vectors and returns results.
 func RunAll() []Result {
 	vectors := GenerateBuiltinVectors()
+	return RunVectors(vectors)
+}
+
+// RunVectors executes a slice of test vectors and returns results.
+func RunVectors(vectors []TestVector) []Result {
 	results := make([]Result, len(vectors))
 	for i, tv := range vectors {
 		results[i] = RunVector(tv)
 	}
 	return results
+}
+
+// RunExternalFile loads vectors from a JSON file and runs them.
+// Returns results, loaded count, skipped count, and any error.
+func RunExternalFile(path string) (results []Result, loaded int, skipped int, err error) {
+	vectors, skipped, err := LoadExternalVectors(path)
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	if len(vectors) == 0 {
+		return nil, 0, skipped, fmt.Errorf("no compatible vectors found in %s", path)
+	}
+	results = RunVectors(vectors)
+	return results, len(vectors), skipped, nil
+}
+
+// Summary returns a formatted pass/fail summary from a set of results.
+func Summary(results []Result) string {
+	passed := 0
+	failed := 0
+	for _, r := range results {
+		if r.Pass {
+			passed++
+		} else {
+			failed++
+		}
+	}
+	return fmt.Sprintf("Total: %d  Passed: %d  Failed: %d", len(results), passed, failed)
 }
 
 func stacksEqual(a, b []uint32) bool {

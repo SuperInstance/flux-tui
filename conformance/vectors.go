@@ -3,9 +3,12 @@ package conformance
 
 import (
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 
 	"github.com/SuperInstance/flux-tui/vm"
 )
@@ -20,7 +23,7 @@ type TestVector struct {
 	ExpectedHalted bool
 }
 
-// jsonVector is the JSON representation of a test vector.
+// jsonVector is the JSON representation of a test vector (simple format).
 type jsonVector struct {
 	Name           string   `json:"name"`
 	Category       string   `json:"category"`
@@ -29,7 +32,166 @@ type jsonVector struct {
 	ExpectedHalted bool     `json:"expected_halted"`
 }
 
-// loadVectorsFile loads test vectors from a JSON file.
+// jsonVectorV1 represents the flux-conformance v1 format with hex bytecode.
+type jsonVectorV1 struct {
+	Name           string      `json:"name"`
+	BytecodeHex    string      `json:"bytecode_hex"`
+	InitialStack   interface{} `json:"initial_stack"`
+	ExpectedStack  interface{} `json:"expected_stack"`
+	ExpectedFlags  interface{} `json:"expected_flags"`
+	Category       string      `json:"category"`
+	Description    string      `json:"description"`
+}
+
+// jsonVectorV3 represents the flux-conformance v3 format.
+type jsonVectorV3 struct {
+	Name               string      `json:"name"`
+	Category           string      `json:"category"`
+	V3Only             bool        `json:"v3_only"`
+	BytecodeHex        string      `json:"bytecode_hex"`
+	InitialStack       interface{} `json:"initial_stack"`
+	ExpectedStack      interface{} `json:"expected_stack"`
+	ExpectedFlags      interface{} `json:"expected_flags"`
+	AllowFloatEpsilon  bool        `json:"allow_float_epsilon"`
+	Description        string      `json:"description"`
+}
+
+// conformanceFile represents the top-level structure of a conformance vectors file.
+type conformanceFile struct {
+	Version      string          `json:"version"`
+	TotalVectors int             `json:"total_vectors"`
+	Vectors      json.RawMessage `json:"vectors"`
+}
+
+// maxBaseOpcode is the highest opcode our ISA v1 VM supports (0x10 = HALT).
+const maxBaseOpcode = 0x10
+
+// LoadVectors loads test vectors from a JSON file, falling back to built-in vectors.
+// Supports three formats:
+//   - Simple binary program array format
+//   - flux-conformance v1 format (hex bytecode)
+//   - flux-conformance v3 format (hex bytecode with categories)
+func LoadVectors(path string) ([]TestVector, error) {
+	vectors, err := loadVectorsFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load vectors from %s: %w", path, err)
+	}
+	if len(vectors) == 0 {
+		return nil, fmt.Errorf("no vectors found in %s", path)
+	}
+	return vectors, nil
+}
+
+// LoadExternalVectors loads vectors from an external JSON file.
+// Returns loaded vectors and a count of skipped (incompatible) vectors.
+func LoadExternalVectors(path string) (loaded []TestVector, skipped int, err error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to read: %w", err)
+	}
+
+	// Try to parse as a conformance file (has version + vectors key)
+	var wrapper conformanceFile
+	if err := json.Unmarshal(data, &wrapper); err == nil && wrapper.Vectors != nil {
+		// Detect format by checking if vectors are objects (v1/v3) or arrays (simple)
+		var firstRaw json.RawMessage
+		var rawArray []json.RawMessage
+		if err := json.Unmarshal(wrapper.Vectors, &rawArray); err == nil && len(rawArray) > 0 {
+			firstRaw = rawArray[0]
+		}
+
+		// Check if first element has bytecode_hex field (v1/v3 format)
+		var probe map[string]json.RawMessage
+		if json.Unmarshal(firstRaw, &probe) == nil {
+			if _, ok := probe["bytecode_hex"]; ok {
+				return loadHexFormatVectors(wrapper.Vectors)
+			}
+		}
+	}
+
+	// Try simple binary format
+	var simple []jsonVector
+	if err := json.Unmarshal(data, &simple); err == nil && len(simple) > 0 {
+		vectors := make([]TestVector, len(simple))
+		for i, rv := range simple {
+			vectors[i] = TestVector{
+				Name:          rv.Name,
+				Category:      rv.Category,
+				Program:       rv.Program,
+				ExpectedStack: rv.ExpectedStack,
+				ExpectedHalted: rv.ExpectedHalted,
+			}
+		}
+		return vectors, 0, nil
+	}
+
+	return nil, 0, fmt.Errorf("unrecognized vector format in %s", path)
+}
+
+// loadHexFormatVectors loads vectors from the flux-conformance hex bytecode format.
+// Filters out vectors that use opcodes beyond our ISA v1 implementation.
+func loadHexFormatVectors(raw json.RawMessage) (loaded []TestVector, skipped int, err error) {
+	var items []json.RawMessage
+	if err := json.Unmarshal(raw, &items); err != nil {
+		return nil, 0, fmt.Errorf("failed to parse vector array: %w", err)
+	}
+
+	for _, item := range items {
+		// Try v3 format first (has v3_only field)
+		var v3 jsonVectorV3
+		if err := json.Unmarshal(item, &v3); err == nil && v3.BytecodeHex != "" {
+			program, parseErr := hexToBytes(v3.BytecodeHex)
+			if parseErr != nil {
+				skipped++
+				continue
+			}
+			if !isBaseISAV1(program) {
+				skipped++
+				continue
+			}
+			stack, _ := toUint32Slice(v3.ExpectedStack)
+			tv := TestVector{
+				Name:          v3.Name,
+				Category:      v3.Category,
+				Program:       program,
+				ExpectedStack: stack,
+				ExpectedHalted: true,
+			}
+			loaded = append(loaded, tv)
+			continue
+		}
+
+		// Try v1 format
+		var v1 jsonVectorV1
+		if err := json.Unmarshal(item, &v1); err == nil && v1.BytecodeHex != "" {
+			program, parseErr := hexToBytes(v1.BytecodeHex)
+			if parseErr != nil {
+				skipped++
+				continue
+			}
+			if !isBaseISAV1(program) {
+				skipped++
+				continue
+			}
+			stack, _ := toUint32Slice(v1.ExpectedStack)
+			tv := TestVector{
+				Name:          v1.Name,
+				Category:      v1.Category,
+				Program:       program,
+				ExpectedStack: stack,
+				ExpectedHalted: true,
+			}
+			loaded = append(loaded, tv)
+			continue
+		}
+
+		skipped++
+	}
+
+	return loaded, skipped, nil
+}
+
+// loadVectorsFile loads test vectors from a JSON file (simple format).
 func loadVectorsFile(path string) ([]TestVector, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -53,19 +215,8 @@ func loadVectorsFile(path string) ([]TestVector, error) {
 	return vectors, nil
 }
 
-// LoadVectors loads test vectors from a JSON file, falling back to built-in vectors.
-func LoadVectors(path string) ([]TestVector, error) {
-	vectors, err := loadVectorsFile(path)
-	if err != nil {
-		return GenerateBuiltinVectors(), nil
-	}
-	if len(vectors) == 0 {
-		return GenerateBuiltinVectors(), nil
-	}
-	return vectors, nil
-}
-
-// GenerateBuiltinVectors returns a comprehensive set of built-in test vectors.
+// GenerateBuiltinVectors returns a comprehensive set of built-in test vectors
+// covering all 17 base FLUX opcodes.
 func GenerateBuiltinVectors() []TestVector {
 	return []TestVector{
 		{Name: "nop_noop", Category: "control",
@@ -115,36 +266,36 @@ func GenerateBuiltinVectors() []TestVector {
 			ExpectedStack: []uint32{2, 1}, ExpectedHalted: true},
 
 		{Name: "jmp_forward", Category: "control",
-			Program:        buildJmpForward(),
-			ExpectedStack:  []uint32{77},
+			Program:       buildJmpForward(),
+			ExpectedStack: []uint32{77},
 			ExpectedHalted: true},
 
 		{Name: "jz_taken", Category: "control",
-			Program:        buildJzTaken(),
-			ExpectedStack:  []uint32{88},
+			Program:       buildJzTaken(),
+			ExpectedStack: []uint32{88},
 			ExpectedHalted: true},
 
 		{Name: "jz_not_taken", Category: "control",
-			Program:        buildJzNotTaken(),
-			ExpectedStack:  []uint32{44},
+			Program:       buildJzNotTaken(),
+			ExpectedStack: []uint32{44},
 			ExpectedHalted: true},
 
 		{Name: "load_store_roundtrip", Category: "memory",
-			Program:        buildLoadStoreRoundtrip(),
-			ExpectedStack:  []uint32{1234},
+			Program:       buildLoadStoreRoundtrip(),
+			ExpectedStack: []uint32{1234},
 			ExpectedHalted: true},
 
 		{Name: "factorial_5", Category: "complex",
-			Program:        buildFactorial5(),
-			ExpectedStack:  []uint32{120},
+			Program:       buildFactorial5(),
+			ExpectedStack: []uint32{120},
 			ExpectedHalted: true},
 
 		{Name: "multiple_nops", Category: "control",
 			Program: []byte{vm.NOP, vm.NOP, vm.NOP, vm.HALT}},
 
 		{Name: "push_negative", Category: "stack",
-			Program:        pushU32(0xFFFFFFD6),
-			ExpectedStack:  []uint32{0xFFFFFFD6},
+			Program:       pushU32(0xFFFFFFD6),
+			ExpectedStack: []uint32{0xFFFFFFD6},
 			ExpectedHalted: true},
 
 		{Name: "chained_arithmetic", Category: "arithmetic",
@@ -152,6 +303,8 @@ func GenerateBuiltinVectors() []TestVector {
 			ExpectedStack: []uint32{20}, ExpectedHalted: true},
 	}
 }
+
+// --- Helper functions ---
 
 func pushU32(val uint32) []byte {
 	buf := make([]byte, 5)
@@ -188,14 +341,12 @@ func storeU16(addr uint16) []byte {
 	return buf
 }
 
-// buildJmpForward: JMP over NOP, PUSH 77, HALT
 func buildJmpForward() []byte {
 	base := vm.ProgramStart
 	target := base + 4
 	return append(append(jmpU16(target), vm.NOP), append(pushU32(77), vm.HALT)...)
 }
 
-// buildJzTaken: PUSH 0, JZ past PUSH 55, PUSH 88, HALT
 func buildJzTaken() []byte {
 	base := vm.ProgramStart
 	target := base + 13
@@ -208,7 +359,6 @@ func buildJzTaken() []byte {
 	return p
 }
 
-// buildJzNotTaken: PUSH 1, JZ past PUSH 44, HALT
 func buildJzNotTaken() []byte {
 	base := vm.ProgramStart
 	target := base + 13
@@ -220,7 +370,6 @@ func buildJzNotTaken() []byte {
 	return p
 }
 
-// buildLoadStoreRoundtrip: PUSH 1234, STORE 0x0200, LOAD 0x0200, HALT
 func buildLoadStoreRoundtrip() []byte {
 	var p []byte
 	p = append(p, pushU32(1234)...)
@@ -255,4 +404,63 @@ func buildFactorial5() []byte {
 	p = append(p, loadU16(0x0300)...)
 	p = append(p, vm.HALT)
 	return p
+}
+
+// hexToBytes converts a hex string (with optional spaces) to a byte slice.
+func hexToBytes(hexStr string) ([]byte, error) {
+	hexStr = strings.ReplaceAll(hexStr, " ", "")
+	hexStr = strings.ReplaceAll(hexStr, "\n", "")
+	return hex.DecodeString(hexStr)
+}
+
+// toUint32Slice converts an interface{} (JSON number array) to []uint32.
+func toUint32Slice(v interface{}) ([]uint32, bool) {
+	if v == nil {
+		return nil, true
+	}
+	switch arr := v.(type) {
+	case []interface{}:
+		result := make([]uint32, len(arr))
+		for i, item := range arr {
+			n, ok := toFloat64(item)
+			if !ok {
+				return nil, false
+			}
+			result[i] = uint32(n)
+		}
+		return result, true
+	case []float64:
+		result := make([]uint32, len(arr))
+		for i, n := range arr {
+			result[i] = uint32(n)
+		}
+		return result, true
+	default:
+		return nil, false
+	}
+}
+
+func toFloat64(v interface{}) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case json.Number:
+		f, err := n.Float64()
+		return f, err == nil
+	case string:
+		f, err := strconv.ParseFloat(n, 64)
+		return f, err == nil
+	default:
+		return 0, false
+	}
+}
+
+// isBaseISAV1 checks if a program only uses opcodes 0x00-0x10 (our base ISA v1).
+func isBaseISAV1(program []byte) bool {
+	for _, b := range program {
+		if b > maxBaseOpcode {
+			return false
+		}
+	}
+	return true
 }
