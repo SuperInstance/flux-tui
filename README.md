@@ -3,10 +3,10 @@
 **FLUX Bytecode VM Debugger & Conformance Dashboard**
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/SuperInstance/flux-tui.svg)](https://pkg.go.dev/github.com/SuperInstance/flux-tui)
-[![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?logo=go)](https://go.dev/)
+[![Go Version](https://img.shields.io/badge/Go-1.23+-00ADD8?logo=go)](https://go.dev/)
 [![bubbletea](https://img.shields.io/badge/bubbletea-charm-5A56E6?logo=charm)](https://github.com/charmbracelet/bubbletea)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-20%2F20-brightgreen)](vm/engine_test.go)
+[![Tests](https://img.shields.io/badge/tests-60%2B-brightgreen)](vm/)
 
 ---
 
@@ -22,9 +22,9 @@ Part of the [SuperInstance](https://github.com/SuperInstance) fleet.
 
 - **Interactive step-through debugging** — Execute FLUX bytecode instruction by instruction with live stack, memory, and disassembly views
 - **FLUX assembly parser & disassembler** — Two-pass assembler that parses `.fluxasm` source into bytecode, plus a disassembler for inspecting compiled programs
-- **Conformance test dashboard** — Run 20 built-in test vectors (covering all 17 opcodes) against the VM and see pass/fail results, plus load external JSON vectors from flux-conformance
+- **Conformance test dashboard** — Run 20 built-in test vectors (covering all 25 opcodes including v1.1 extensions) against the VM and see pass/fail results, plus load external JSON vectors from flux-conformance
 - **Bytecode inspector** — Hex dump view of compiled bytecode with ASCII preview, PC highlight, and inline disassembly annotations
-- **ISA reference browser** — Browse all 17 FLUX opcodes with their encoding formats, stack effects, and descriptions; supports filtering by name
+- **ISA reference browser** — Browse all 25 FLUX opcodes (17 base + 8 v1.1 extensions) with their encoding formats, stack effects, and descriptions; supports filtering by name
 - **Snapshot/restore debugging primitives** — Save VM state at any point and restore it later for reproducible debugging sessions
 - **Command mode** — Enter `:` command mode for text-based debugging commands (step, run, reset, stack, mem, regs, pc)
 - **Smart file loading** — Auto-detects `.fluxasm` (assembly) vs `.fluxbin` (binary) from file extension; loads assembly files through the built-in assembler
@@ -192,7 +192,7 @@ DONE:
 
 ## FLUX ISA v1 Reference
 
-The FLUX bytecode VM is a **stack-based** machine with 17 core opcodes. All multi-byte values are big-endian.
+The FLUX bytecode VM is a **stack-based** machine with 17 core opcodes and 8 v1.1 extension opcodes (25 total). All multi-byte values are big-endian.
 
 ### Opcode Map
 
@@ -215,6 +215,19 @@ The FLUX bytecode VM is a **stack-based** machine with 17 core opcodes. All mult
 | `0x0E` | `LOAD` | B | +1 | Load 4-byte word from memory |
 | `0x0F` | `STORE` | B | -1 | Store 4-byte word to memory |
 | `0x10` | `HALT` | - | | Stop execution |
+
+#### v1.1 Extension Opcodes
+
+| Hex | Opcode | Format | Stack Effect | Description |
+|-----|--------|--------|-------------|-------------|
+| `0x11` | `CALL` | B | +1 | Push return address, jump to addr16 |
+| `0x12` | `RET` | - | -1 | Pop return address and jump to it |
+| `0x13` | `CMP` | - | -2 | Pop two, compare b-a, set flags |
+| `0x14` | `JNZ` | B | -1 | Jump to address if top of stack is non-zero |
+| `0x15` | `JC` | B | | Jump to address if carry flag is set |
+| `0x16` | `SHL` | - | -1 | Pop two, push b << a |
+| `0x17` | `SHR` | - | -1 | Pop two, push b >> a (logical) |
+| `0x18` | `DIV` | - | -1 | Pop two, push b/a |
 
 ### Instruction Encoding
 
@@ -266,15 +279,18 @@ flux-tui/
 │       └── styles.go   # Lipgloss style definitions
 ├── vm/                 # FLUX bytecode virtual machine
 │   ├── engine.go       # Core VM: fetch-decode-execute cycle
-│   ├── engine_test.go  # 20 test cases covering all opcodes
+│   ├── engine_test.go  # 20 base opcode test cases
+│   ├── engine_ext_test.go  # 20+ extension opcode + breakpoint tests
 │   ├── memory.go       # 64KB byte-addressable memory
 │   ├── stack.go        # 256-entry operand stack
 │   ├── registers.go    # PC, SP, flags
-│   ├── opcodes.go      # Opcode definitions and encoding helpers
+│   ├── opcodes.go      # 25 opcode definitions and encoding helpers
+│   ├── breakpoints.go  # Breakpoint manager with add/remove/toggle
 │   └── helpers.go      # Opcode name maps and width calculations
 ├── assembler/          # Two-pass FLUX assembler
-│   ├── lexer.go        # Tokenizer for .fluxasm source
 │   ├── assembler.go    # Label resolution and code emission
+│   ├── assembler_test.go # 20+ assembler/disassembler/lexer tests
+│   ├── lexer.go        # Tokenizer for .fluxasm source
 │   ├── disassembler.go # Bytecode to assembly listing
 │   └── api.go          # Convenience Assemble() function
 └── conformance/        # Test vector framework
@@ -288,7 +304,7 @@ flux-tui/
 
 ### Prerequisites
 
-- Go 1.21+
+- Go 1.23+
 
 ### Build
 
@@ -316,7 +332,7 @@ go run ./cmd/flux-tui examples/factorial.fluxasm
 flux-tui follows the [SuperInstance fleet conventions](https://github.com/SuperInstance/fleet-contributing):
 
 1. **Push often** — Small, atomic commits with clear messages
-2. **Test first** — `go test ./...` before every push; all 20 tests must pass
+2. **Test first** — `go test ./...` before every push; all 60+ tests must pass
 3. **Conventional commits** — `feat:`, `fix:`, `test:`, `docs:`, `refactor:` prefixes
 4. **The repo IS the agent** — README, tests, and commit history are primary documentation
 5. **Witness marks** — Commit messages explain *why*, not just *what*

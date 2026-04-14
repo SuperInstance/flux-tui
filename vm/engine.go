@@ -5,23 +5,28 @@ import (
         "fmt"
 )
 
+// ReturnStackSize is the max depth for the call return stack.
+const ReturnStackSize = 64
+
 // EngineSnapshot captures the complete VM state for snapshot/restore.
 type EngineSnapshot struct {
-        StepCount int
-        PC        uint16
-        Flags     uint8
-        Zero      bool
-        Carry     bool
-        Overflow  bool
-        StackData []uint32
-        Memory    [MemorySize]byte
-        Halted    bool
+        StepCount    int
+        PC           uint16
+        Flags        uint8
+        Zero         bool
+        Carry        bool
+        Overflow     bool
+        StackData    []uint32
+        ReturnStack  []uint32
+        Memory       [MemorySize]byte
+        Halted       bool
 }
 
 // Engine is the FLUX bytecode virtual machine.
 type Engine struct {
         mem         *Memory
         stack       *Stack
+        returnStack *Stack // separate call stack for CALL/RET
         regs        *Registers
         stepCount   int
         halted      bool
@@ -42,6 +47,7 @@ func NewEngine() *Engine {
         return &Engine{
                 mem:         NewMemory(),
                 stack:       NewStack(),
+                returnStack: NewStack(),
                 regs:        NewRegisters(),
                 breakpoints: NewBreakpointManager(),
                 Memory:      make(map[uint16]uint32),
@@ -86,9 +92,14 @@ func (e *Engine) Breakpoints() *BreakpointManager {
         return e.breakpoints
 }
 
-// Stack returns the current stack.
+// Stack returns the current operand stack.
 func (e *Engine) Stack() *Stack {
         return e.stack
+}
+
+// ReturnStack returns the call return stack.
+func (e *Engine) ReturnStack() *Stack {
+        return e.returnStack
 }
 
 // Memory returns the current memory (pointer to the underlying Memory struct).
@@ -119,15 +130,16 @@ func (e *Engine) StackValues() []uint32 {
 // Snapshot captures the current engine state.
 func (e *Engine) Snapshot() *EngineSnapshot {
         return &EngineSnapshot{
-                StepCount: e.stepCount,
-                PC:        e.regs.PC,
-                Flags:     e.regs.Flags,
-                Zero:      e.regs.Zero(),
-                Carry:     e.regs.Carry(),
-                Overflow:  e.regs.Overflow(),
-                StackData: e.stack.Items(),
-                Memory:    e.mem.Raw(),
-                Halted:    e.halted,
+                StepCount:   e.stepCount,
+                PC:          e.regs.PC,
+                Flags:       e.regs.Flags,
+                Zero:        e.regs.Zero(),
+                Carry:       e.regs.Carry(),
+                Overflow:    e.regs.Overflow(),
+                StackData:   e.stack.Items(),
+                ReturnStack: e.returnStack.Items(),
+                Memory:      e.mem.Raw(),
+                Halted:      e.halted,
         }
 }
 
@@ -138,10 +150,14 @@ func (e *Engine) Restore(snap *EngineSnapshot) {
         e.regs.Flags = snap.Flags
         e.halted = snap.Halted
         e.mem.SetData(snap.Memory)
-        // Reconstruct stack from StackData
+        // Reconstruct stacks from snapshot data
         e.stack.Clear()
         for _, v := range snap.StackData {
                 _ = e.stack.Push(v)
+        }
+        e.returnStack.Clear()
+        for _, v := range snap.ReturnStack {
+                _ = e.returnStack.Push(v)
         }
         e.syncFields()
 }
@@ -375,17 +391,17 @@ func (e *Engine) Step() error {
                 }
                 addr := uint16(e.mem.data[e.regs.PC])<<8 | uint16(e.mem.data[e.regs.PC+1])
                 nextPC := e.regs.PC + 2
-                if err := e.stack.Push(uint32(nextPC)); err != nil {
+                if err := e.returnStack.Push(uint32(nextPC)); err != nil {
                         e.halted = true
-                        return fmt.Errorf("CALL: stack overflow")
+                        return fmt.Errorf("CALL: return stack overflow")
                 }
                 e.regs.PC = addr
 
         case RET:
-                val, err := e.stack.Pop()
+                val, err := e.returnStack.Pop()
                 if err != nil {
                         e.halted = true
-                        return fmt.Errorf("RET: stack underflow")
+                        return fmt.Errorf("RET: return stack underflow")
                 }
                 e.regs.PC = uint16(val)
 
