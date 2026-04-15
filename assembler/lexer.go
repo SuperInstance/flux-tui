@@ -67,7 +67,7 @@ var knownOpcodes = map[string]bool{
         "XOR": true, "NOT": true, "JMP": true, "JZ": true, "LOAD": true,
         "STORE": true, "HALT": true,
         "CALL": true, "RET": true, "CMP": true, "JNZ": true, "JC": true,
-        "SHL": true, "SHR": true, "DIV": true,
+        "SHL": true, "SHR": true, "DIV": true, "MOD": true,
 }
 
 // Lexer tokenizes FLUX assembly source code.

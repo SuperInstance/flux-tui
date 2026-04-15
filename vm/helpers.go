@@ -27,6 +27,7 @@ var OpcodeNames = map[byte]string{
         SHL:   "SHL",
         SHR:   "SHR",
         DIV:   "DIV",
+        MOD:   "MOD",
 }
 
 // NameToOpcode maps mnemonic names to opcode byte values.
@@ -56,6 +57,7 @@ var NameToOpcode = map[string]byte{
         "SHL":   SHL,
         "SHR":   SHR,
         "DIV":   DIV,
+        "MOD":   MOD,
 }
 
 // OpcodeWidth returns the number of bytes consumed by an instruction

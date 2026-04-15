@@ -29,6 +29,7 @@ const (
         SHL   byte = 0x16
         SHR   byte = 0x17
         DIV   byte = 0x18
+        MOD   byte = 0x19
 )
 
 // OpcodeMeta describes metadata for a single opcode.
@@ -40,10 +41,10 @@ type OpcodeMeta struct {
 }
 
 // OpcodeTable maps each opcode index to its metadata.
-var OpcodeTable [25]OpcodeMeta
+var OpcodeTable [26]OpcodeMeta
 
 func init() {
-        OpcodeTable = [25]OpcodeMeta{
+        OpcodeTable = [26]OpcodeMeta{
                 NOP:   {Name: "NOP", Description: "No operation", Format: "-", StackEffect: ""},
                 PUSH:  {Name: "PUSH", Description: "Push 4-byte immediate value onto stack", Format: "A", StackEffect: "+1"},
                 POP:   {Name: "POP", Description: "Pop top value from stack", Format: "-", StackEffect: "-1"},
@@ -68,7 +69,8 @@ func init() {
                 JC:    {Name: "JC", Description: "Jump to address if carry flag is set", Format: "B", StackEffect: ""},
                 SHL:   {Name: "SHL", Description: "Pop two, push b << a", Format: "-", StackEffect: "-1"},
                 SHR:   {Name: "SHR", Description: "Pop two, push b >> a (logical)", Format: "-", StackEffect: "-1"},
-                DIV:   {Name: "DIV", Description: "Pop two, push b/a", Format: "-", StackEffect: "-1"},
+                DIV:   {Name: "DIV", Description: "Pop two, push b/a, carry=remainder", Format: "-", StackEffect: "-1"},
+                MOD:   {Name: "MOD", Description: "Pop two, push b%%a (remainder)", Format: "-", StackEffect: "-1"},
         }
 }
 
@@ -97,7 +99,10 @@ func FormatB(opcode byte, addr uint16) []byte {
 // OpcodeName returns the human-readable name for an opcode, or "UNKNOWN" if invalid.
 func OpcodeName(op byte) string {
         if int(op) < len(OpcodeTable) {
-                return OpcodeTable[op].Name
+                name := OpcodeTable[op].Name
+                if name != "" {
+                        return name
+                }
         }
         return "UNKNOWN"
 }
@@ -105,4 +110,15 @@ func OpcodeName(op byte) string {
 // ValidOpcode returns true if the byte is a recognized opcode.
 func ValidOpcode(op byte) bool {
         return int(op) < len(OpcodeTable) && OpcodeTable[op].Name != ""
+}
+
+// OpcodeCount returns the total number of defined opcodes.
+func OpcodeCount() int {
+        count := 0
+        for _, meta := range OpcodeTable {
+                if meta.Name != "" {
+                        count++
+                }
+        }
+        return count
 }

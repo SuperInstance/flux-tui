@@ -265,7 +265,9 @@ func (e *Engine) Step() error {
                         return fmt.Errorf("MUL: stack underflow")
                 }
                 result := b * a
-                e.regs.SetFlags(result, false, false)
+                // Detect multiplication overflow: if a != 0 and result/a != b, we overflowed
+                carry := a != 0 && result/a != b
+                e.regs.SetFlags(result, carry, false)
                 if err := e.stack.Push(result); err != nil {
                         e.halted = true
                         return err
@@ -450,8 +452,11 @@ func (e *Engine) Step() error {
                         e.halted = true
                         return fmt.Errorf("SHL: stack underflow")
                 }
-                result := b << (a & 31)
-                e.regs.SetFlags(result, false, false)
+                shift := a & 31
+                // Detect if any bits were shifted out (carry = bits lost)
+                carry := shift > 0 && (b>>(32-shift)) != 0
+                result := b << shift
+                e.regs.SetFlags(result, carry, false)
                 if err := e.stack.Push(result); err != nil {
                         e.halted = true
                         return err
@@ -464,8 +469,11 @@ func (e *Engine) Step() error {
                         e.halted = true
                         return fmt.Errorf("SHR: stack underflow")
                 }
-                result := b >> (a & 31)
-                e.regs.SetFlags(result, false, false)
+                shift := a & 31
+                // Carry = bits were shifted out (any of the lower 'shift' bits were 1)
+                carry := shift > 0 && (b & ((1<<shift)-1)) != 0
+                result := b >> shift
+                e.regs.SetFlags(result, carry, false)
                 if err := e.stack.Push(result); err != nil {
                         e.halted = true
                         return err
@@ -482,7 +490,28 @@ func (e *Engine) Step() error {
                         e.halted = true
                         return fmt.Errorf("DIV: division by zero")
                 }
-                result := b / a
+                quotient := b / a
+                remainder := b % a
+                // Carry = non-zero remainder
+                carry := remainder != 0
+                e.regs.SetFlags(quotient, carry, false)
+                if err := e.stack.Push(quotient); err != nil {
+                        e.halted = true
+                        return err
+                }
+
+        case MOD:
+                a, err1 := e.stack.Pop()
+                b, err2 := e.stack.Pop()
+                if err1 != nil || err2 != nil {
+                        e.halted = true
+                        return fmt.Errorf("MOD: stack underflow")
+                }
+                if a == 0 {
+                        e.halted = true
+                        return fmt.Errorf("MOD: division by zero")
+                }
+                result := b % a
                 e.regs.SetFlags(result, false, false)
                 if err := e.stack.Push(result); err != nil {
                         e.halted = true

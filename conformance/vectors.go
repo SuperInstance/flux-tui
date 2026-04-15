@@ -64,7 +64,7 @@ type conformanceFile struct {
 }
 
 // maxSupportedOpcode is the highest opcode our VM supports (0x18 = DIV, ISA v1.1).
-const maxSupportedOpcode = 0x18
+const maxSupportedOpcode = 0x19
 
 // LoadVectors loads test vectors from a JSON file, falling back to built-in vectors.
 // Supports three formats:

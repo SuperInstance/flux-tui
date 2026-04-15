@@ -483,6 +483,158 @@ func TestCMP_SubsequentJZ(t *testing.T) {
         }
 }
 
+// --- MOD opcode tests ---
+
+func TestMOD(t *testing.T) {
+        e := NewEngine()
+        // PUSH 17 (b), PUSH 5 (a), MOD => 17 % 5 = 2
+        prog := append(append(FormatA(PUSH, 17), FormatA(PUSH, 5)...), MOD, HALT)
+        e.LoadProgram(prog)
+        e.Run()
+        val, _ := e.stack.Peek()
+        if val != 2 {
+                t.Errorf("expected 2 (17%%5), got %d", val)
+        }
+}
+
+func TestMOD_ByOne(t *testing.T) {
+        e := NewEngine()
+        prog := append(append(FormatA(PUSH, 42), FormatA(PUSH, 1)...), MOD, HALT)
+        e.LoadProgram(prog)
+        e.Run()
+        val, _ := e.stack.Peek()
+        if val != 0 {
+                t.Errorf("expected 0 (42%%1), got %d", val)
+        }
+}
+
+func TestMOD_ByZero(t *testing.T) {
+        e := NewEngine()
+        prog := append(append(FormatA(PUSH, 42), FormatA(PUSH, 0)...), MOD, HALT)
+        e.LoadProgram(prog)
+        e.Run()
+        if !e.IsHalted() {
+                t.Error("expected engine halted on modulo by zero")
+        }
+}
+
+func TestMOD_LargeDividend(t *testing.T) {
+        e := NewEngine()
+        // 0xFFFFFFFF % 10 = 5
+        prog := append(append(FormatA(PUSH, 0xFFFFFFFF), FormatA(PUSH, 10)...), MOD, HALT)
+        e.LoadProgram(prog)
+        e.Run()
+        val, _ := e.stack.Peek()
+        if val != 5 {
+                t.Errorf("expected 5 (0xFFFFFFFF%%10), got %d", val)
+        }
+}
+
+func TestMOD_Width(t *testing.T) {
+        if OpcodeWidth(MOD) != 1 {
+                t.Errorf("expected MOD width 1, got %d", OpcodeWidth(MOD))
+        }
+}
+
+// --- Improved flag detection tests ---
+
+func TestMUL_Overflow(t *testing.T) {
+        e := NewEngine()
+        // 0x10000 * 0x10000 = 0x100000000 which overflows uint32 to 0
+        // Actually let's use: 0xFFFFFFFF * 2 = 0xFFFFFFFE (overflow)
+        prog := append(append(FormatA(PUSH, 0xFFFFFFFF), FormatA(PUSH, 2)...), MUL, HALT)
+        e.LoadProgram(prog)
+        e.Run()
+        if !e.regs.Carry() {
+                t.Error("expected carry flag set on multiplication overflow")
+        }
+}
+
+func TestMUL_NoOverflow(t *testing.T) {
+        e := NewEngine()
+        prog := append(append(FormatA(PUSH, 3), FormatA(PUSH, 4)...), MUL, HALT)
+        e.LoadProgram(prog)
+        e.Run()
+        if e.regs.Carry() {
+                t.Error("expected no carry flag for 3*4=12 (no overflow)")
+        }
+}
+
+func TestDIV_WithRemainder(t *testing.T) {
+        e := NewEngine()
+        // 17 / 5 = 3 remainder 2 -> carry set
+        prog := append(append(FormatA(PUSH, 17), FormatA(PUSH, 5)...), DIV, HALT)
+        e.LoadProgram(prog)
+        e.Run()
+        val, _ := e.stack.Peek()
+        if val != 3 {
+                t.Errorf("expected 3 (17/5), got %d", val)
+        }
+        if !e.regs.Carry() {
+                t.Error("expected carry flag set when remainder is non-zero")
+        }
+}
+
+func TestDIV_Exact(t *testing.T) {
+        e := NewEngine()
+        prog := append(append(FormatA(PUSH, 15), FormatA(PUSH, 3)...), DIV, HALT)
+        e.LoadProgram(prog)
+        e.Run()
+        if e.regs.Carry() {
+                t.Error("expected no carry flag for exact division (15/3=5)")
+        }
+}
+
+func TestSHL_Carry(t *testing.T) {
+        e := NewEngine()
+        // 1 << 31 = 0x80000000 (MSB set, no bits lost from value 1)
+        // But let's test: 0xFF << 4 = 0xFF0 -> bits lost = 0xF shifted out
+        // Actually: 3 << 30 = 0xC0000000, but 3 >> 2 = 0 (bits 0,1 lost)
+        // Let's use: 0xFFFFFFFF << 1 = 0xFFFFFFFE, carry = (0xFFFFFFFF >> 31) = 1 != 0
+        prog := append(append(FormatA(PUSH, 0xFFFFFFFF), FormatA(PUSH, 1)...), SHL, HALT)
+        e.LoadProgram(prog)
+        e.Run()
+        if !e.regs.Carry() {
+                t.Error("expected carry flag set when SHL loses the MSB")
+        }
+        val, _ := e.stack.Peek()
+        if val != 0xFFFFFFFE {
+                t.Errorf("expected 0xFFFFFFFE, got 0x%08X", val)
+        }
+}
+
+func TestSHR_Carry(t *testing.T) {
+        e := NewEngine()
+        // 0xFF >> 4 = 0x0F, carry = lower 4 bits were 0xF (non-zero)
+        prog := append(append(FormatA(PUSH, 0xFF), FormatA(PUSH, 4)...), SHR, HALT)
+        e.LoadProgram(prog)
+        e.Run()
+        if !e.regs.Carry() {
+                t.Error("expected carry flag set when SHR loses lower bits")
+        }
+        val, _ := e.stack.Peek()
+        if val != 0x0F {
+                t.Errorf("expected 0x0F, got 0x%08X", val)
+        }
+}
+
+func TestSHR_NoCarry(t *testing.T) {
+        e := NewEngine()
+        // 0x10 >> 4 = 0x01, carry = lower 4 bits = 0x0 (zero, no carry)
+        prog := append(append(FormatA(PUSH, 0x10), FormatA(PUSH, 4)...), SHR, HALT)
+        e.LoadProgram(prog)
+        e.Run()
+        if e.regs.Carry() {
+                t.Error("expected no carry flag when SHR doesn't lose any set bits")
+        }
+}
+
+func TestOpcodeCount(t *testing.T) {
+        if OpcodeCount() != 26 {
+                t.Errorf("expected 26 defined opcodes, got %d", OpcodeCount())
+        }
+}
+
 // --- OpcodeWidth tests ---
 
 func TestOpcodeWidth_NewOpcodes(t *testing.T) {
@@ -510,6 +662,9 @@ func TestOpcodeWidth_NewOpcodes(t *testing.T) {
         if OpcodeWidth(DIV) != 1 {
                 t.Errorf("expected DIV width 1, got %d", OpcodeWidth(DIV))
         }
+        if OpcodeWidth(MOD) != 1 {
+                t.Errorf("expected MOD width 1, got %d", OpcodeWidth(MOD))
+        }
 }
 
 // --- OpcodeTable completeness ---
@@ -525,9 +680,10 @@ func TestOpcodeTable_AllOpcodes(t *testing.T) {
                 {STORE, "STORE"}, {HALT, "HALT"},
                 {CALL, "CALL"}, {RET, "RET"}, {CMP, "CMP"}, {JNZ, "JNZ"}, {JC, "JC"},
                 {SHL, "SHL"}, {SHR, "SHR"}, {DIV, "DIV"},
+                {MOD, "MOD"},
         }
-        if len(OpcodeTable) != 25 {
-                t.Errorf("expected 25 opcodes in table, got %d", len(OpcodeTable))
+        if len(OpcodeTable) != 26 {
+                t.Errorf("expected 26 opcodes in table, got %d", len(OpcodeTable))
         }
         for _, tc := range expected {
                 if int(tc.code) >= len(OpcodeTable) {
