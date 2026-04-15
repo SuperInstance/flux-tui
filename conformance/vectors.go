@@ -216,14 +216,14 @@ func loadVectorsFile(path string) ([]TestVector, error) {
 }
 
 // GenerateBuiltinVectors returns a comprehensive set of built-in test vectors
-// covering all 17 base FLUX opcodes.
+// covering all 26 FLUX opcodes (17 base + 9 v1.1 extensions).
 func GenerateBuiltinVectors() []TestVector {
         return []TestVector{
                 {Name: "nop_noop", Category: "control",
-                        Program: []byte{vm.NOP, vm.HALT}},
+                        Program: []byte{vm.NOP, vm.HALT}, ExpectedHalted: true},
 
                 {Name: "push_pop_empty", Category: "stack",
-                        Program: append(pushU32(42), vm.POP, vm.HALT)},
+                        Program: append(pushU32(42), vm.POP, vm.HALT), ExpectedHalted: true},
 
                 {Name: "push_single", Category: "stack",
                         Program: append(pushU32(42), vm.HALT),
@@ -291,16 +291,137 @@ func GenerateBuiltinVectors() []TestVector {
                         ExpectedHalted: true},
 
                 {Name: "multiple_nops", Category: "control",
-                        Program: []byte{vm.NOP, vm.NOP, vm.NOP, vm.HALT}},
+                        Program: []byte{vm.NOP, vm.NOP, vm.NOP, vm.HALT}, ExpectedHalted: true},
 
                 {Name: "push_negative", Category: "stack",
-                        Program:       pushU32(0xFFFFFFD6),
+                        Program: append(pushU32(0xFFFFFFD6), vm.HALT),
                         ExpectedStack: []uint32{0xFFFFFFD6},
                         ExpectedHalted: true},
 
                 {Name: "chained_arithmetic", Category: "arithmetic",
                         Program: append(append(append(pushU32(2), pushU32(3)...), vm.ADD), append(pushU32(4), vm.MUL, vm.HALT)...),
                         ExpectedStack: []uint32{20}, ExpectedHalted: true},
+
+                // --- v1.1 Extension Opcode Vectors ---
+
+                {Name: "ext_call_ret_basic", Category: "extension",
+                        Program:       buildCallRetBasic(),
+                        ExpectedStack: []uint32{42},
+                        ExpectedHalted: true},
+
+                {Name: "ext_call_ret_nested", Category: "extension",
+                        Program:       buildCallRetNested(),
+                        ExpectedStack: []uint32{10, 50},
+                        ExpectedHalted: true},
+
+                {Name: "ext_cmp_equal", Category: "extension",
+                        Program:       buildCmpEqual(),
+                        ExpectedStack: []uint32{},
+                        ExpectedHalted: true},
+
+                {Name: "ext_cmp_not_equal", Category: "extension",
+                        Program:       buildCmpNotEqual(),
+                        ExpectedStack: []uint32{},
+                        ExpectedHalted: true},
+
+                {Name: "ext_cmp_less_than", Category: "extension",
+                        Program:       buildCmpLessThan(),
+                        ExpectedStack: []uint32{},
+                        ExpectedHalted: true},
+
+                {Name: "ext_shl_basic", Category: "extension",
+                        Program: append(append(pushU32(4), pushU32(1)...), vm.SHL, vm.HALT),
+                        ExpectedStack: []uint32{8}, ExpectedHalted: true},
+
+                {Name: "ext_shl_large", Category: "extension",
+                        Program: append(append(pushU32(1), pushU32(4)...), vm.SHL, vm.HALT),
+                        ExpectedStack: []uint32{16}, ExpectedHalted: true},
+
+                {Name: "ext_shr_basic", Category: "extension",
+                        Program: append(append(pushU32(16), pushU32(2)...), vm.SHR, vm.HALT),
+                        ExpectedStack: []uint32{4}, ExpectedHalted: true},
+
+                {Name: "ext_shr_logical", Category: "extension",
+                        Program: append(append(pushU32(0x80000000), pushU32(1)...), vm.SHR, vm.HALT),
+                        ExpectedStack: []uint32{0x40000000}, ExpectedHalted: true},
+
+                {Name: "ext_shl_overflow_carry", Category: "extension",
+                        Program: append(append(pushU32(1), pushU32(0)...), vm.SHL, vm.HALT),
+                        ExpectedStack: []uint32{1}, ExpectedHalted: true},
+
+                {Name: "ext_shr_no_carry", Category: "extension",
+                        Program: append(append(pushU32(8), pushU32(4)...), vm.SHR, vm.HALT),
+                        ExpectedStack: []uint32{0}, ExpectedHalted: true},
+
+                {Name: "ext_div_exact", Category: "extension",
+                        Program: append(append(pushU32(15), pushU32(3)...), vm.DIV, vm.HALT),
+                        ExpectedStack: []uint32{5}, ExpectedHalted: true},
+
+                {Name: "ext_div_with_remainder", Category: "extension",
+                        Program: append(append(pushU32(17), pushU32(5)...), vm.DIV, vm.HALT),
+                        ExpectedStack: []uint32{3}, ExpectedHalted: true},
+
+                {Name: "ext_mod_basic", Category: "extension",
+                        Program: append(append(pushU32(17), pushU32(5)...), vm.MOD, vm.HALT),
+                        ExpectedStack: []uint32{2}, ExpectedHalted: true},
+
+                {Name: "ext_mod_by_one", Category: "extension",
+                        Program: append(append(pushU32(42), pushU32(1)...), vm.MOD, vm.HALT),
+                        ExpectedStack: []uint32{0}, ExpectedHalted: true},
+
+                {Name: "ext_mod_max", Category: "extension",
+                        Program: append(append(pushU32(0xFFFFFFFF), pushU32(10)...), vm.MOD, vm.HALT),
+                        ExpectedStack: []uint32{5}, ExpectedHalted: true},
+
+                {Name: "ext_jnz_taken", Category: "extension",
+                        Program:       buildJnzTaken(),
+                        ExpectedStack: []uint32{77},
+                        ExpectedHalted: true},
+
+                {Name: "ext_jnz_not_taken", Category: "extension",
+                        Program:       buildJnzNotTaken(),
+                        ExpectedStack: []uint32{55},
+                        ExpectedHalted: true},
+
+                {Name: "ext_sub_then_jc", Category: "extension",
+                        Program:       buildSubThenJc(),
+                        ExpectedStack: []uint32{2},
+                        ExpectedHalted: true},
+
+                {Name: "ext_carry_jc_taken", Category: "extension",
+                        Program:       buildCarryJcTaken(),
+                        ExpectedStack: []uint32{0xFFFFFFFE, 99},
+                        ExpectedHalted: true},
+
+                {Name: "ext_cmp_greater", Category: "extension",
+                        Program: append(append(pushU32(7), pushU32(3)...), vm.CMP, vm.HALT),
+                        ExpectedStack: []uint32{},
+                        ExpectedHalted: true},
+
+                {Name: "ext_div_zero_halt", Category: "edge",
+                        Program: append(append(pushU32(42), pushU32(0)...), vm.DIV, vm.HALT),
+                        ExpectedStack: []uint32{},
+                        ExpectedHalted: true},
+
+                {Name: "ext_mod_zero_halt", Category: "edge",
+                        Program: append(append(pushU32(42), pushU32(0)...), vm.MOD, vm.HALT),
+                        ExpectedStack: []uint32{},
+                        ExpectedHalted: true},
+
+                {Name: "ext_mul_overflow", Category: "edge",
+                        Program: append(append(pushU32(0xFFFFFFFF), pushU32(2)...), vm.MUL, vm.HALT),
+                        ExpectedStack: []uint32{0xFFFFFFFE},
+                        ExpectedHalted: true},
+
+                {Name: "ext_shl_31bits", Category: "edge",
+                        Program: append(append(pushU32(1), pushU32(31)...), vm.SHL, vm.HALT),
+                        ExpectedStack: []uint32{0x80000000},
+                        ExpectedHalted: true},
+
+                {Name: "ext_call_ret_depth_10", Category: "edge",
+                        Program:       buildCallRetDepthN(10),
+                        ExpectedStack: []uint32{1},
+                        ExpectedHalted: true},
         }
 }
 
@@ -379,7 +500,8 @@ func buildLoadStoreRoundtrip() []byte {
         return p
 }
 
-// buildFactorial5 computes 5! = 120 using memory at 0x0300 (acc) and 0x0301 (counter).
+// buildFactorial5 computes 5! = 120 using memory at 0x0300 (acc) and 0x0304 (counter).
+// Counter is offset by 4 bytes (word-aligned) to prevent StoreWord overlap.
 func buildFactorial5() []byte {
         base := vm.ProgramStart
         loopAddr := base + 16
@@ -389,22 +511,214 @@ func buildFactorial5() []byte {
         p = append(p, pushU32(1)...)
         p = append(p, storeU16(0x0300)...)
         p = append(p, pushU32(5)...)
-        p = append(p, storeU16(0x0301)...)
-        p = append(p, loadU16(0x0301)...)
+        p = append(p, storeU16(0x0304)...)
+        p = append(p, loadU16(0x0304)...)
         p = append(p, jzU16(doneAddr)...)
         p = append(p, loadU16(0x0300)...)
-        p = append(p, loadU16(0x0301)...)
+        p = append(p, loadU16(0x0304)...)
         p = append(p, vm.MUL)
         p = append(p, storeU16(0x0300)...)
-        p = append(p, loadU16(0x0301)...)
+        p = append(p, loadU16(0x0304)...)
         p = append(p, pushU32(1)...)
         p = append(p, vm.SUB)
-        p = append(p, storeU16(0x0301)...)
+        p = append(p, storeU16(0x0304)...)
         p = append(p, jmpU16(loopAddr)...)
         p = append(p, loadU16(0x0300)...)
         p = append(p, vm.HALT)
         return p
 }
+
+// --- v1.1 Extension helpers ---
+
+func buildCmpEqual() []byte {
+        return append(append(pushU32(7), pushU32(7)...), vm.CMP, vm.HALT)
+}
+
+func buildCmpNotEqual() []byte {
+        return append(append(pushU32(5), pushU32(3)...), vm.CMP, vm.HALT)
+}
+
+func buildCmpLessThan() []byte {
+        return append(append(pushU32(3), pushU32(5)...), vm.CMP, vm.HALT)
+}
+
+func buildSubThenJc() []byte {
+        // PUSH 5, PUSH 3, SUB -> result=2, carry=false (no underflow)
+        // JC to dead HALT -> not taken, falls through to real HALT
+        base := vm.ProgramStart
+        var p []byte
+        p = append(p, pushU32(5)...)
+        p = append(p, pushU32(3)...)
+        p = append(p, vm.SUB)
+        // JC to a dead HALT (never taken since no carry)
+        deadTarget := base + uint16(len(p)) + 3 + 1 // JC(3) + HALT(1)
+        p = append(p, vm.JC, byte(deadTarget>>8), byte(deadTarget))
+        p = append(p, vm.HALT) // this executes (result=2 on stack)
+        return p
+}
+
+func buildCallRetBasic() []byte {
+        // CALL subroutine -> PUSH 42 -> RET -> HALT
+        base := vm.ProgramStart
+        var p []byte
+
+        // Main: CALL sub
+        p = append(p, vm.CALL, 0x00, 0x00) // placeholder, patch below
+        callIdx := len(p) - 2
+        p = append(p, vm.HALT)
+
+        // Subroutine: PUSH 42, RET
+        subAddr := base + uint16(len(p))
+        p[callIdx] = byte(subAddr >> 8)
+        p[callIdx+1] = byte(subAddr)
+        p = append(p, pushU32(42)...)
+        p = append(p, vm.RET)
+        return p
+}
+
+func buildCallRetNested() []byte {
+        // PUSH 10, CALL subA, HALT
+        // subA: PUSH 20, CALL subB, ADD, RET
+        // subB: PUSH 30, RET
+        // Result: stack = [10, 50] (10 + (20+30))
+        base := vm.ProgramStart
+        var p []byte
+
+        p = append(p, pushU32(10)...)
+        p = append(p, vm.CALL, 0x00, 0x00) // CALL subA
+        mainCallIdx := len(p) - 2
+        p = append(p, vm.HALT)
+
+        subAAddr := base + uint16(len(p))
+        p[mainCallIdx] = byte(subAAddr >> 8)
+        p[mainCallIdx+1] = byte(subAAddr)
+
+        p = append(p, pushU32(20)...)
+        p = append(p, vm.CALL, 0x00, 0x00) // CALL subB
+        subACallIdx := len(p) - 2
+        p = append(p, vm.ADD)
+        p = append(p, vm.RET)
+
+        subBAddr := base + uint16(len(p))
+        p[subACallIdx] = byte(subBAddr >> 8)
+        p[subACallIdx+1] = byte(subBAddr)
+        p = append(p, pushU32(30)...)
+        p = append(p, vm.RET)
+        return p
+}
+func buildJnzTaken() []byte {
+        // PUSH 77, PUSH 1, JNZ past_dead_halt -> HALT (77 stays on stack)
+        base := vm.ProgramStart
+        var p []byte
+        p = append(p, pushU32(77)...)
+        p = append(p, pushU32(1)...)
+        p = append(p, vm.JNZ, 0x00, 0x00) // placeholder
+        jnzIdx := len(p) - 2
+        p = append(p, vm.HALT) // dead: JNZ taken skips this
+        skipTarget := base + uint16(len(p))
+        p[jnzIdx] = byte(skipTarget >> 8)
+        p[jnzIdx+1] = byte(skipTarget)
+        p = append(p, vm.HALT)
+        return p
+}
+
+func buildJnzNotTaken() []byte {
+        // PUSH 55, PUSH 0, JNZ somewhere -> not taken (0), falls through to HALT
+        base := vm.ProgramStart
+        var p []byte
+        p = append(p, pushU32(55)...)
+        p = append(p, pushU32(0)...)
+        // JNZ to a dead HALT (never taken since value is 0)
+        deadTarget := base + uint16(len(p)) + 3 + 1 // JNZ(3) + HALT(1)
+        p = append(p, vm.JNZ, byte(deadTarget>>8), byte(deadTarget))
+        p = append(p, vm.HALT) // this executes
+        return p
+}
+
+func buildCarryJcTaken() []byte {
+        // PUSH 3, PUSH 5, SUB -> result=0xFFFFFFFE, carry=true (underflow)
+        // JC taken -> skip dead HALT -> PUSH 99 -> HALT
+        base := vm.ProgramStart
+        var p []byte
+        p = append(p, pushU32(3)...)
+        p = append(p, pushU32(5)...)
+        p = append(p, vm.SUB)
+        // JC target = current offset + JC(3) + dead HALT(1) = PUSH 99 location
+        push99Offset := base + uint16(len(p)) + 3 + 1
+        p = append(p, vm.JC, byte(push99Offset>>8), byte(push99Offset))
+        p = append(p, vm.HALT) // dead: JC taken skips this
+        p = append(p, pushU32(99)...)
+        p = append(p, vm.HALT)
+        return p
+}
+
+func buildCallRetDepthN(depth int) []byte {
+        // Test deep call stack using recursion: a subroutine that counts down
+        // and calls itself, then PUSH 1 after unwinding.
+        // Uses memory at 0x0400 as counter.
+        //
+        // Main:
+        //   PUSH depth, STORE 0x0400
+        //   CALL subroutine
+        //   HALT  (should never reach here — subroutine does the final push)
+        //
+        // Subroutine:
+        //   LOAD 0x0400
+        //   JZ done        <- if counter is 0, jump to done
+        //   LOAD 0x0400
+        //   PUSH 1, SUB
+        //   STORE 0x0400
+        //   CALL subroutine  <- recursive call
+        //   RET
+        //
+        // Done:
+        //   PUSH 1
+        //   RET  <- return to caller
+
+        base := vm.ProgramStart
+        var p []byte
+
+        // Main: PUSH depth, STORE 0x0400, CALL sub, HALT
+        p = append(p, pushU32(uint32(depth))...)
+        p = append(p, storeU16(0x0400)...)
+
+        // CALL subroutine (placeholder, patch below)
+        p = append(p, vm.CALL, 0x00, 0x00)
+        callIdx := uint16(len(p)) - 2
+
+        p = append(p, vm.HALT) // should never execute
+
+        // Subroutine starts here
+        subAddr := base + uint16(len(p))
+        p[callIdx] = byte(subAddr >> 8)
+        p[callIdx+1] = byte(subAddr)
+
+        // Sub body: LOAD counter, JZ done, decrement, recursive CALL, RET
+        p = append(p, loadU16(0x0400)...)
+        p = append(p, vm.JZ, 0x00, 0x00) // placeholder for done target
+        jzIdx := uint16(len(p)) - 2
+
+        p = append(p, loadU16(0x0400)...)
+        p = append(p, pushU32(1)...)
+        p = append(p, vm.SUB)
+        p = append(p, storeU16(0x0400)...)
+
+        // Recursive CALL (points to self = subAddr)
+        p = append(p, vm.CALL, byte(subAddr>>8), byte(subAddr))
+
+        p = append(p, vm.RET) // return to caller after recursion unwinds
+
+        // Done: PUSH 1, RET
+        doneAddr := base + uint16(len(p))
+        p[jzIdx] = byte(doneAddr >> 8)
+        p[jzIdx+1] = byte(doneAddr)
+
+        p = append(p, pushU32(1)...)
+        p = append(p, vm.RET)
+
+        return p
+}
+
 
 // hexToBytes converts a hex string (with optional spaces) to a byte slice.
 func hexToBytes(hexStr string) ([]byte, error) {
